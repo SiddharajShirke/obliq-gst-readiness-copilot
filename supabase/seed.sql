@@ -1,0 +1,3 @@
+-- Authentication users and tenant-linked demo records are created by
+-- `python scripts/seed_demo.py` so password hashing stays inside Supabase Auth.
+-- Shared knowledge is ingested by `python scripts/ingest_knowledge.py`.

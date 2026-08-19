@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Preserve binary fixtures and generated assets byte-for-byte.
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.xlsx binary
+*.zip binary

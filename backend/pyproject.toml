@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obliq-gst-backend"
+version = "0.1.0"
+description = "FastAPI backend for the OBLIQ GST Readiness Copilot prototype"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "uvicorn[standard]>=0.35,<1",
+  "pydantic>=2.11,<3",
+  "pydantic-settings>=2.10,<3",
+  "email-validator>=2.2,<3",
+  "python-multipart>=0.0.20,<1",
+  "httpx>=0.28,<1",
+  "PyJWT[crypto]>=2.10,<3",
+  "supabase>=2.18,<3",
+  "pandas>=2.3,<4",
+  "openpyxl>=3.1,<4",
+  "PyMuPDF>=1.26,<2",
+  "Pillow>=11,<13",
+  "pytesseract>=0.3.13,<1",
+  "sentence-transformers>=5,<6",
+  "langgraph>=0.6,<2",
+  "reportlab>=4.4,<5",
+  "beautifulsoup4>=4.13,<5",
+  "python-docx>=1.2,<2",
+  "numpy>=2,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4,<10",
+  "pytest-asyncio>=1,<2",
+  "ruff>=0.12,<1",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]

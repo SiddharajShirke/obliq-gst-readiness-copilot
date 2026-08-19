@@ -1,0 +1,27 @@
+{
+  "raw_text": "Synthetic invoice fixture",
+  "structured_data": {
+    "document_type": "sales_invoice",
+    "supplier_name": "Raj Traders",
+    "supplier_gstin": "27RAJTR1234A1Z5",
+    "customer_name": "Acme Stores",
+    "customer_gstin": "27ACMES1234A1Z8",
+    "invoice_number": "RT-501",
+    "invoice_date": "2026-04-18",
+    "place_of_supply": "Maharashtra",
+    "taxable_value": 50000,
+    "cgst": 4500,
+    "sgst": 4500,
+    "igst": 0,
+    "cess": 0,
+    "invoice_total": 59000,
+    "hsn_sac": "9983",
+    "line_items": [],
+    "field_confidences": {
+      "invoice_number": 0.94,
+      "invoice_total": 0.94
+    },
+    "overall_confidence": 0.94,
+    "warnings": []
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "raw_text": "Synthetic invoice fixture",
+  "structured_data": {
+    "document_type": "purchase_invoice",
+    "supplier_name": "Mehta Office Supplies",
+    "supplier_gstin": "27MEHTA1234M1Z2",
+    "customer_name": "Raj Traders",
+    "customer_gstin": "27RAJTR1234A1Z5",
+    "invoice_number": "MOS-19",
+    "invoice_date": "2026-04-22",
+    "place_of_supply": "Maharashtra",
+    "taxable_value": 9000,
+    "cgst": 810,
+    "sgst": 810,
+    "igst": 0,
+    "cess": 0,
+    "invoice_total": 10620,
+    "hsn_sac": "9983",
+    "line_items": [],
+    "field_confidences": {
+      "invoice_number": 0.58,
+      "invoice_total": 0.58
+    },
+    "overall_confidence": 0.58,
+    "warnings": [
+      "Low-quality scan requires review"
+    ]
+  }
+}

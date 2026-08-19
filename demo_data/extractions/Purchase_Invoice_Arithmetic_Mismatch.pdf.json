@@ -1,0 +1,27 @@
+{
+  "raw_text": "Synthetic invoice fixture",
+  "structured_data": {
+    "document_type": "purchase_invoice",
+    "supplier_name": "Jupiter Papers",
+    "supplier_gstin": "27JUPIT1234R1Z7",
+    "customer_name": "Raj Traders",
+    "customer_gstin": "27RAJTR1234A1Z5",
+    "invoice_number": "JP-881",
+    "invoice_date": "2026-04-21",
+    "place_of_supply": "Maharashtra",
+    "taxable_value": 20000,
+    "cgst": 1800,
+    "sgst": 1800,
+    "igst": 0,
+    "cess": 0,
+    "invoice_total": 24900,
+    "hsn_sac": "9983",
+    "line_items": [],
+    "field_confidences": {
+      "invoice_number": 0.94,
+      "invoice_total": 0.94
+    },
+    "overall_confidence": 0.94,
+    "warnings": []
+  }
+}

@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+
+from app.agents.rag_assistant import RAGAssistant
+from app.config import Settings, get_settings
+from app.dependencies import current_user, require_roles
+from app.repositories import DataStore, get_store
+from app.schemas.auth import UserContext
+from app.schemas.rag import AssistantAnswer, AssistantQuery, KnowledgeTextIngest
+from app.services.rag.ingestion import ingest_bytes, ingest_text
+
+router = APIRouter(tags=["rag"])
+
+
+@router.post("/knowledge/upload", status_code=201)
+async def upload_knowledge(
+    file: UploadFile = File(...),
+    title: str = Form(...),
+    source_type: str = Form("firm_sop"),
+    source_url: str | None = Form(None),
+    document_version: str = Form("demo-v1"),
+    user: UserContext = Depends(require_roles("firm_admin")),
+    store: DataStore = Depends(get_store),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    content = await file.read()
+    filename = file.filename or "knowledge.txt"
+    digest = hashlib.sha256(content).hexdigest()
+    safe_name = "".join(character if character.isalnum() or character in ".-_" else "_" for character in Path(filename).name)
+    storage_path = f"{user.firm_id}/knowledge/{digest[:12]}-{safe_name}"
+    await store.upload_file(settings.supabase_knowledge_bucket, storage_path, content, file.content_type or "application/octet-stream")
+    try:
+        return await ingest_bytes(
+            store,
+            settings,
+            content=content,
+            filename=filename,
+            title=title,
+            source_type=source_type,
+            source_url=source_url,
+            firm_id=user.firm_id,
+            document_version=document_version,
+            storage_path=storage_path,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/knowledge/ingest", status_code=201)
+async def ingest_knowledge_text(
+    payload: KnowledgeTextIngest,
+    user: Annotated[UserContext, Depends(require_roles("firm_admin"))],
+    store: Annotated[DataStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    if payload.shared_official:
+        raise HTTPException(
+            status_code=403,
+            detail="Shared official knowledge can only be installed by a trusted seed or operator process",
+        )
+    firm_id = user.firm_id
+    return await ingest_text(
+        store,
+        settings,
+        text=payload.text,
+        title=payload.title,
+        source_type=payload.source_type,
+        source_url=payload.source_url,
+        firm_id=firm_id,
+        document_version=payload.document_version,
+    )
+
+
+@router.get("/knowledge/sources")
+async def list_knowledge_sources(
+    user: Annotated[UserContext, Depends(current_user)],
+    store: Annotated[DataStore, Depends(get_store)],
+) -> list[dict]:
+    all_rows = await store.list_rows("knowledge_sources", order="created_at", desc=True)
+    return [row for row in all_rows if row.get("firm_id") in (None, user.firm_id)]
+
+
+@router.post("/assistant/query", response_model=AssistantAnswer)
+async def assistant_query(
+    payload: AssistantQuery,
+    user: Annotated[UserContext, Depends(current_user)],
+    store: Annotated[DataStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    return await RAGAssistant(store, settings).query(
+        question=payload.question,
+        firm_id=user.firm_id,
+        application_id=payload.application_id,
+        source_type=payload.source_type,
+    )

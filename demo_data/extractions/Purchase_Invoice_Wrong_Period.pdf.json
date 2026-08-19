@@ -1,0 +1,27 @@
+{
+  "raw_text": "Synthetic invoice fixture",
+  "structured_data": {
+    "document_type": "purchase_invoice",
+    "supplier_name": "Tech Supplies",
+    "supplier_gstin": "29TECHS1234T1Z2",
+    "customer_name": "Raj Traders",
+    "customer_gstin": "27RAJTR1234A1Z5",
+    "invoice_number": "TS-220",
+    "invoice_date": "2026-03-29",
+    "place_of_supply": "Maharashtra",
+    "taxable_value": 10000,
+    "cgst": 0,
+    "sgst": 0,
+    "igst": 1800,
+    "cess": 0,
+    "invoice_total": 11800,
+    "hsn_sac": "9983",
+    "line_items": [],
+    "field_confidences": {
+      "invoice_number": 0.94,
+      "invoice_total": 0.94
+    },
+    "overall_confidence": 0.94,
+    "warnings": []
+  }
+}
