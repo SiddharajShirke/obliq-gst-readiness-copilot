@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -72,19 +72,20 @@ class Settings(BaseSettings):
     local_upload_dir: Path = Path(".runtime/uploads")
     local_export_dir: Path = Path(".runtime/exports")
 
-    whatsapp_provider: str = "mock"
-    meta_access_token: str = ""
-    meta_phone_number_id: str = ""
-    meta_waba_id: str = ""
-    meta_app_secret: str = ""
-    meta_webhook_verify_token: str = "obliq-local-verify-token"
-    meta_graph_api_version: str = "v26.0"
-    meta_test_recipient_number: str = ""
-    meta_document_request_template: str = "gst_document_request_v1"
-    meta_reminder_template: str = "gst_document_reminder_v1"
-    allow_local_credential_setup: bool = False
-    local_meta_credentials_file: Path = Path(".runtime/meta_credentials.json")
-    public_webhook_base_url: str = ""
+    whatsapp_provider: str = "vonage"
+    vonage_api_key: str = ""
+    vonage_api_secret: str = ""
+    vonage_signature_secret: str = ""
+    vonage_whatsapp_from: str = ""
+    vonage_sandbox_join_message: str = ""
+    vonage_messages_base_url: str = "https://messages-sandbox.nexmo.com"
+    public_base_url: str = ""
+    whatsapp_demo_token_expiry_minutes: int = 20
+    whatsapp_demo_session_expiry_minutes: int = 120
+    whatsapp_demo_data_retention_hours: int = 24
+    whatsapp_demo_token_pepper: str = ""
+    whatsapp_phone_hash_pepper: str = ""
+    whatsapp_phone_encryption_key: str = ""
 
     demo_admin_email: str = "demo.admin@obliq.local"
     demo_admin_password: str = "ChangeMe123!"
@@ -101,6 +102,31 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @model_validator(mode="after")
+    def validate_whatsapp_runtime(self) -> Settings:
+        if self.whatsapp_provider == "mock" and self.app_env == "test":
+            return self
+        if self.whatsapp_provider != "vonage":
+            raise ValueError("WHATSAPP_PROVIDER must be vonage outside automated tests")
+        required = {
+            "VONAGE_API_KEY": self.vonage_api_key,
+            "VONAGE_API_SECRET": self.vonage_api_secret,
+            "VONAGE_SIGNATURE_SECRET": self.vonage_signature_secret,
+            "VONAGE_WHATSAPP_FROM": self.vonage_whatsapp_from,
+            "VONAGE_SANDBOX_JOIN_MESSAGE": self.vonage_sandbox_join_message,
+            "VONAGE_MESSAGES_BASE_URL": self.vonage_messages_base_url,
+            "PUBLIC_BASE_URL": self.public_base_url,
+            "WHATSAPP_DEMO_TOKEN_PEPPER": self.whatsapp_demo_token_pepper,
+            "WHATSAPP_PHONE_HASH_PEPPER": self.whatsapp_phone_hash_pepper,
+            "WHATSAPP_PHONE_ENCRYPTION_KEY": self.whatsapp_phone_encryption_key,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise ValueError(
+                "Vonage WhatsApp configuration is incomplete: " + ", ".join(missing)
+            )
+        return self
 
     @property
     def allowed_extensions(self) -> set[str]:

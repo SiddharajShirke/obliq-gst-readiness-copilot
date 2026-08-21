@@ -24,7 +24,12 @@ async def list_applications(
     user: Annotated[UserContext, Depends(current_user)],
     store: Annotated[DataStore, Depends(get_store)],
 ) -> list[dict]:
-    return await store.list_rows("applications", {"firm_id": user.firm_id}, order="created_at", desc=True)
+    return await store.list_rows(
+        "applications",
+        {"firm_id": user.firm_id, "demo_session_id": None},
+        order="created_at",
+        desc=True,
+    )
 
 
 @router.post("/clients/{client_id}/applications", status_code=status.HTTP_201_CREATED)
@@ -79,6 +84,8 @@ async def get_application(
     store: Annotated[DataStore, Depends(get_store)],
 ) -> dict:
     application = await require_firm_row(store, "applications", application_id, user.firm_id)
+    if application.get("demo_session_id"):
+        raise HTTPException(status_code=404, detail="Application not found")
     client = await store.get_row("clients", application["client_id"])
     return {**application, "client": client}
 
@@ -125,7 +132,9 @@ async def dashboard_summary(
     store: Annotated[DataStore, Depends(get_store)],
 ) -> dict:
     clients = await store.list_rows("clients", {"firm_id": user.firm_id})
-    applications = await store.list_rows("applications", {"firm_id": user.firm_id})
+    applications = await store.list_rows(
+        "applications", {"firm_id": user.firm_id, "demo_session_id": None}
+    )
     missing = 0
     for application in applications:
         requirements = await store.list_rows("document_requirements", {"application_id": application["id"]})

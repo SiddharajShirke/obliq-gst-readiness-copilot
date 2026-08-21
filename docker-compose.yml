@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     env_file: .env
+    environment:
+      WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-vonage}
     ports:
       - "8000:8000"
     volumes:

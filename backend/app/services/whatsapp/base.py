@@ -1,41 +1,47 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Protocol
+from dataclasses import dataclass
+from typing import Protocol
 
 
 @dataclass(slots=True)
 class MessageSendResult:
-    external_message_id: str
-    status: str
-    raw: dict[str, Any] = field(default_factory=dict)
+    provider: str
+    provider_message_id: str
+    initial_status: str
 
 
-@dataclass(slots=True)
-class WhatsAppEvent:
-    kind: str
-    external_message_id: str
-    sender_phone: str | None = None
-    recipient_phone: str | None = None
-    message_type: str | None = None
-    text: str | None = None
-    media_id: str | None = None
-    filename: str | None = None
-    mime_type: str | None = None
-    status: str | None = None
-    raw: dict[str, Any] = field(default_factory=dict)
+class WhatsAppSendError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        provider: str,
+        status: int | None,
+        code: str | None,
+        safe_message: str,
+    ) -> None:
+        super().__init__(f"{provider} WhatsApp message could not be sent")
+        self.provider = provider
+        self.status = status
+        self.code = code
+        self.safe_message = safe_message
 
 
 class WhatsAppProvider(Protocol):
     name: str
 
-    async def send_text(self, *, recipient: str, text: str) -> MessageSendResult: ...
-    async def send_template(
+    async def send_text(
         self,
         *,
         recipient: str,
-        template_name: str,
-        language_code: str,
-        parameters: list[str],
+        text: str,
+        status_callback: str | None = None,
     ) -> MessageSendResult: ...
-    async def download_media(self, media_id: str) -> tuple[bytes, str, str]: ...
+
+    def validate_webhook(
+        self,
+        *,
+        raw_body: bytes,
+        authorization: str | None,
+        now: int | None = None,
+    ) -> bool: ...

@@ -11,22 +11,24 @@ DEMO_FILES = ROOT / "demo_data" / "documents"
 
 
 def _upload(application_id: str, client_id: str, requirement_type: str, filename: str) -> dict:
+    del client_id
+    link = client.post(
+        f"/api/v1/applications/{application_id}/upload-link", headers=AUTH
+    )
+    assert link.status_code == 201, link.text
+    token = link.json()["token"]
     path = DEMO_FILES / filename
     with path.open("rb") as handle:
         response = client.post(
-            "/api/v1/demo/upload",
-            data={
-                "client_id": client_id,
-                "application_id": application_id,
-                "requirement_type": requirement_type,
-            },
+            f"/api/v1/public/upload/{token}",
+            data={"requirement_type": requirement_type},
             files={"file": (path.name, handle, "application/octet-stream")},
         )
     assert response.status_code == 201, response.text
     return response.json()
 
 
-def test_complete_mock_gst_readiness_walkthrough() -> None:
+def test_complete_gst_readiness_walkthrough() -> None:
     created_client = client.post(
         "/api/v1/clients",
         headers=AUTH,
@@ -74,7 +76,9 @@ def test_complete_mock_gst_readiness_walkthrough() -> None:
     )
     assert sent.status_code == 200, sent.text
 
-    first_document = _upload(application_id, client_id, "sales_register", "Sales_Register_April.csv")
+    first_document = _upload(
+        application_id, client_id, "sales_register", "Sales_Register_April.csv"
+    )
     _upload(application_id, client_id, "sales_invoice", "Sales_Invoice_RT-501.pdf")
     _upload(application_id, client_id, "purchase_invoice", "Purchase_Invoice_SD-1042.pdf")
     _upload(application_id, client_id, "gstr2b", "GSTR2B_April.json")

@@ -10,23 +10,25 @@ class MockWhatsAppProvider:
 
     name = "mock"
 
-    async def send_text(self, *, recipient: str, text: str) -> MessageSendResult:
-        return MessageSendResult(
-            external_message_id=f"mock-{uuid.uuid4()}",
-            status="delivered",
-            raw={"recipient": recipient, "text": text},
-        )
-
-    async def send_template(
+    async def send_text(
         self,
         *,
         recipient: str,
-        template_name: str,
-        language_code: str,
-        parameters: list[str],
+        text: str,
+        status_callback: str | None = None,
     ) -> MessageSendResult:
-        rendered = f"[{template_name}] " + " | ".join(parameters)
-        return await self.send_text(recipient=recipient, text=rendered)
+        return MessageSendResult(
+            provider=self.name,
+            provider_message_id=f"mock-{uuid.uuid4()}",
+            initial_status="delivered",
+        )
 
-    async def download_media(self, media_id: str) -> tuple[bytes, str, str]:
-        raise RuntimeError("Mock media is uploaded directly through the demo endpoint")
+    def validate_webhook(
+        self,
+        *,
+        raw_body: bytes,
+        authorization: str | None,
+        now: int | None = None,
+    ) -> bool:
+        del raw_body, authorization, now
+        return True

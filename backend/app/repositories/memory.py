@@ -94,6 +94,7 @@ class MemoryStore:
             "reconciliation_items": [],
             "reminders": [],
             "whatsapp_messages": [],
+            "whatsapp_demo_sessions": [],
             "integration_settings": [],
             "knowledge_sources": [],
             "knowledge_chunks": [],
@@ -304,6 +305,144 @@ class MemoryStore:
         return await self.insert_row(table, data)
 
     async def rpc(self, function_name: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        if function_name == "create_whatsapp_demo_session":
+            async with self.lock:
+                base = next(
+                    (
+                        row
+                        for row in self.tables["applications"]
+                        if row["id"] == params["p_base_application_id"]
+                        and row["firm_id"] == params["p_firm_id"]
+                        and not row.get("demo_session_id")
+                    ),
+                    None,
+                )
+                if not base:
+                    return []
+                now = self._now()
+                session_id = str(uuid.uuid4())
+                application_id = str(uuid.uuid4())
+                session = {
+                    "id": session_id,
+                    "firm_id": base["firm_id"],
+                    "base_client_id": base["client_id"],
+                    "base_application_id": base["id"],
+                    "session_application_id": application_id,
+                    "created_by_user_id": params["p_created_by_user_id"],
+                    "start_token_hash": params["p_start_token_hash"],
+                    "dashboard_access_token_hash": params[
+                        "p_dashboard_access_token_hash"
+                    ],
+                    "judge_phone_hash": None,
+                    "judge_phone_encrypted": None,
+                    "judge_phone_last_four": None,
+                    "provider_user_id_hash": None,
+                    "status": "waiting_for_start",
+                    "current_step": "scan_start_qr",
+                    "token_expires_at": params["p_token_expires_at"],
+                    "expires_at": params["p_expires_at"],
+                    "created_at": now,
+                    "connected_at": None,
+                    "last_activity_at": None,
+                    "completed_at": None,
+                    "cancelled_at": None,
+                    "anonymized_at": None,
+                    "metadata": {},
+                    "updated_at": now,
+                }
+                clone = deepcopy(base)
+                clone.update(
+                    {
+                        "id": application_id,
+                        "demo_session_id": session_id,
+                        "status": "not_started",
+                        "filing_date": None,
+                        "arn": None,
+                        "filed_return_document_id": None,
+                        "payment_challan_document_id": None,
+                        "final_notes": None,
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                )
+                self.tables["whatsapp_demo_sessions"].append(session)
+                self.tables["applications"].append(clone)
+                requirements = [
+                    row
+                    for row in self.tables["document_requirements"]
+                    if row["application_id"] == base["id"]
+                ]
+                for requirement in requirements:
+                    cloned_requirement = deepcopy(requirement)
+                    cloned_requirement.update(
+                        {
+                            "id": str(uuid.uuid4()),
+                            "application_id": application_id,
+                            "status": "missing",
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                    )
+                    self.tables["document_requirements"].append(cloned_requirement)
+                return [
+                    {
+                        "session_id": session_id,
+                        "session_application_id": application_id,
+                        "base_client_id": base["client_id"],
+                    }
+                ]
+        if function_name == "bind_whatsapp_demo_session":
+            async with self.lock:
+                now = datetime.fromisoformat(
+                    str(params["p_now"]).replace("Z", "+00:00")
+                )
+                session = next(
+                    (
+                        row
+                        for row in self.tables["whatsapp_demo_sessions"]
+                        if row.get("start_token_hash") == params["p_start_token_hash"]
+                        and row.get("status") == "waiting_for_start"
+                        and datetime.fromisoformat(
+                            str(row["token_expires_at"]).replace("Z", "+00:00")
+                        )
+                        > now
+                        and datetime.fromisoformat(
+                            str(row["expires_at"]).replace("Z", "+00:00")
+                        )
+                        > now
+                    ),
+                    None,
+                )
+                if not session:
+                    return []
+                for other in self.tables["whatsapp_demo_sessions"]:
+                    if (
+                        other["id"] != session["id"]
+                        and other.get("judge_phone_hash") == params["p_judge_phone_hash"]
+                        and other.get("status") == "active"
+                    ):
+                        other.update(
+                            {
+                                "status": "cancelled",
+                                "cancelled_at": params["p_now"],
+                                "last_activity_at": params["p_now"],
+                            }
+                        )
+                session.update(
+                    {
+                        "start_token_hash": None,
+                        "judge_phone_hash": params["p_judge_phone_hash"],
+                        "judge_phone_encrypted": params["p_judge_phone_encrypted"],
+                        "judge_phone_last_four": params["p_judge_phone_last_four"],
+                        "provider_user_id_hash": params["p_provider_user_id_hash"],
+                        "status": "active",
+                        "current_step": "checklist_sent",
+                        "connected_at": params["p_now"],
+                        "last_activity_at": params["p_now"],
+                        "updated_at": params["p_now"],
+                    }
+                )
+                return [deepcopy(session)]
         if function_name == "match_knowledge_chunks":
             query = params.get("query_embedding") or []
             firm_id = params.get("user_firm_id")
