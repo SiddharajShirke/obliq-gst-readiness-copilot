@@ -1,88 +1,131 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { getSupabaseBrowserClient } from "@/lib/supabase";
+import {createContext, useCallback, useContext, useEffect, useMemo, useState} from "react";
+import {useRouter} from "next/navigation";
+import type {Session} from "@supabase/supabase-js";
 
-export type AuthUser = { email: string; name?: string; role?: string };
+import {
+  clearLegacyAuthState,
+  isMemoryDemoAuthEnabled,
+  LEGACY_ACCESS_TOKEN_KEY,
+  LEGACY_USER_KEY,
+} from "./auth-session";
+import {
+  getSupabaseBrowserClient,
+  isSupabaseAuthConfigured,
+} from "./supabase";
+
+export type AuthUser = {email: string; name?: string; role?: string};
+type DemoRole = "admin" | "preparer" | "reviewer";
 
 type AuthContextValue = {
   user: AuthUser | null;
   loading: boolean;
   demoMode: boolean;
   login: (email: string, password: string) => Promise<void>;
-  loginDemo: (role?: "admin" | "preparer" | "reviewer") => Promise<void>;
+  loginDemo: (role?: DemoRole) => Promise<void>;
   register: (email: string, password: string, fullName: string) => Promise<string>;
   logout: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const demoTokens = {
+const demoTokens: Record<DemoRole, string> = {
   admin: "demo-admin-token",
   preparer: "demo-preparer-token",
   reviewer: "demo-reviewer-token",
 };
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+function sessionUser(session: Session | null): AuthUser | null {
+  if (!session) return null;
+  return {
+    email: session.user.email || "CA user",
+    name: session.user.user_metadata?.full_name,
+  };
+}
+
+export function AuthProvider({children}: {children: React.ReactNode}) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE !== "false";
+  const demoMode = isMemoryDemoAuthEnabled(
+    process.env.NEXT_PUBLIC_DEMO_MODE,
+    isSupabaseAuthConfigured(),
+  );
 
   useEffect(() => {
-    async function restore() {
-      const stored = window.localStorage.getItem("obliq_access_token");
-      const storedUser = window.localStorage.getItem("obliq_user");
-      if (stored && storedUser) {
-        setUser(JSON.parse(storedUser));
-        setLoading(false);
-        return;
-      }
-      const supabase = getSupabaseBrowserClient();
-      if (supabase) {
-        const { data } = await supabase.auth.getSession();
-        if (data.session) {
-          window.localStorage.setItem("obliq_access_token", data.session.access_token);
-          const authUser = { email: data.session.user.email || "CA user" };
-          window.localStorage.setItem("obliq_user", JSON.stringify(authUser));
-          setUser(authUser);
+    const supabase = getSupabaseBrowserClient();
+    const invalidate = () => {
+      setUser(null);
+      router.replace("/auth/login");
+    };
+    window.addEventListener("obliq:auth-invalid", invalidate);
+
+    if (supabase) {
+      clearLegacyAuthState(window.localStorage);
+      void supabase.auth.getSession()
+        .then(({data}) => setUser(sessionUser(data.session)))
+        .finally(() => setLoading(false));
+      const {data: listener} = supabase.auth.onAuthStateChange((_event, session) => {
+        setUser(sessionUser(session));
+      });
+      return () => {
+        listener.subscription.unsubscribe();
+        window.removeEventListener("obliq:auth-invalid", invalidate);
+      };
+    }
+
+    let restoredUser: AuthUser | null = null;
+    if (demoMode) {
+      const storedUser = window.localStorage.getItem(LEGACY_USER_KEY);
+      const storedToken = window.localStorage.getItem(LEGACY_ACCESS_TOKEN_KEY);
+      if (storedUser && Object.values(demoTokens).includes(storedToken || "")) {
+        try {
+          restoredUser = JSON.parse(storedUser) as AuthUser;
+        } catch {
+          clearLegacyAuthState(window.localStorage);
         }
       }
-      setLoading(false);
+    } else {
+      clearLegacyAuthState(window.localStorage);
     }
-    restore();
-  }, []);
-
-  const persist = useCallback((token: string, authUser: AuthUser) => {
-    window.localStorage.setItem("obliq_access_token", token);
-    window.localStorage.setItem("obliq_user", JSON.stringify(authUser));
-    setUser(authUser);
-  }, []);
+    queueMicrotask(() => {
+      setUser(restoredUser);
+      setLoading(false);
+    });
+    return () => window.removeEventListener("obliq:auth-invalid", invalidate);
+  }, [demoMode, router]);
 
   const login = useCallback(async (email: string, password: string) => {
     const supabase = getSupabaseBrowserClient();
-    if (!supabase) throw new Error("Supabase Auth is not configured. Use the demo account instead.");
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (!supabase) throw new Error("Supabase Auth is not configured.");
+    clearLegacyAuthState(window.localStorage);
+    const {data, error} = await supabase.auth.signInWithPassword({email, password});
     if (error || !data.session) throw new Error(error?.message || "Login failed");
-    persist(data.session.access_token, { email: data.user.email || email });
-  }, [persist]);
+    setUser(sessionUser(data.session));
+  }, []);
 
-  const loginDemo = useCallback(async (role: "admin" | "preparer" | "reviewer" = "admin") => {
-    persist(demoTokens[role], {
+  const loginDemo = useCallback(async (role: DemoRole = "admin") => {
+    if (!demoMode) {
+      throw new Error("Demo-token login is unavailable when Supabase Auth is configured.");
+    }
+    const authUser = {
       email: role === "admin" ? "demo.admin@obliq.local" : `demo.${role}@obliq.local`,
       name: role === "admin" ? "Ananya Sharma" : role === "preparer" ? "Aman Verma" : "Priya Nair",
       role,
-    });
-  }, [persist]);
+    };
+    window.localStorage.setItem(LEGACY_ACCESS_TOKEN_KEY, demoTokens[role]);
+    window.localStorage.setItem(LEGACY_USER_KEY, JSON.stringify(authUser));
+    setUser(authUser);
+  }, [demoMode]);
 
   const register = useCallback(async (email: string, password: string, fullName: string) => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) throw new Error("Supabase Auth is not configured in this environment.");
-    const { data, error } = await supabase.auth.signUp({
+    const {data, error} = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { full_name: fullName } },
+      options: {data: {full_name: fullName}},
     });
     if (error) throw new Error(error.message);
     return data.session
@@ -93,13 +136,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     const supabase = getSupabaseBrowserClient();
     if (supabase) await supabase.auth.signOut();
-    window.localStorage.removeItem("obliq_access_token");
-    window.localStorage.removeItem("obliq_user");
+    clearLegacyAuthState(window.localStorage);
     setUser(null);
     router.push("/");
   }, [router]);
 
-  const value = useMemo(() => ({ user, loading, demoMode, login, loginDemo, register, logout }), [user, loading, demoMode, login, loginDemo, register, logout]);
+  const value = useMemo(
+    () => ({user, loading, demoMode, login, loginDemo, register, logout}),
+    [user, loading, demoMode, login, loginDemo, register, logout],
+  );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
