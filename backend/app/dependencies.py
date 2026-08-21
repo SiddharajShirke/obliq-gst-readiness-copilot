@@ -11,6 +11,7 @@ from app.repositories import DataStore, get_store
 from app.schemas.auth import UserContext
 
 bearer_scheme = HTTPBearer(auto_error=False)
+INVALID_AUTH_DETAIL = "Invalid or expired authentication session"
 
 
 async def current_user(
@@ -18,10 +19,25 @@ async def current_user(
     store: Annotated[DataStore, Depends(get_store)],
 ) -> UserContext:
     if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required"
+        )
+    if store.name == "supabase" and len(credentials.credentials.split(".")) != 3:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=INVALID_AUTH_DETAIL,
+        )
     user = await store.get_user_from_token(credentials.credentials)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=INVALID_AUTH_DETAIL,
+        )
+    if not user.get("firm_id") or not user.get("role"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not assigned to an OBLIQ firm",
+        )
     return UserContext(
         user_id=user["id"],
         firm_id=user["firm_id"],
@@ -33,8 +49,11 @@ async def current_user(
 def require_roles(*roles: str):
     async def dependency(user: Annotated[UserContext, Depends(current_user)]) -> UserContext:
         if user.role not in roles:
-            raise HTTPException(status_code=403, detail="This role cannot perform the requested action")
+            raise HTTPException(
+                status_code=403, detail="This role cannot perform the requested action"
+            )
         return user
+
     return dependency
 
 

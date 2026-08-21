@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import httpx
+from supabase_auth.errors import AuthApiError
+
 from app.config import Settings
 
 
@@ -14,12 +17,28 @@ class SupabaseStore:
     def __init__(self, settings: Settings) -> None:
         if not settings.supabase_url or not settings.supabase_service_role_key:
             raise RuntimeError("Supabase URL and service-role key are required")
-        from supabase import create_client
+        from supabase import ClientOptions, create_client
 
         self.settings = settings
-        self.client = create_client(settings.supabase_url, settings.supabase_service_role_key)
+        self.http_client = httpx.Client(
+            http2=False,
+            timeout=httpx.Timeout(30.0, connect=10.0),
+        )
+        self.client = create_client(
+            settings.supabase_url,
+            settings.supabase_service_role_key,
+            options=ClientOptions(httpx_client=self.http_client),
+        )
 
-    async def list_rows(self, table: str, filters: dict[str, Any] | None = None, *, order: str | None = None, desc: bool = False, limit: int | None = None) -> list[dict[str, Any]]:
+    async def list_rows(
+        self,
+        table: str,
+        filters: dict[str, Any] | None = None,
+        *,
+        order: str | None = None,
+        desc: bool = False,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
         def run() -> list[dict[str, Any]]:
             query = self.client.table(table).select("*")
             for key, value in (filters or {}).items():
@@ -34,6 +53,7 @@ class SupabaseStore:
             if limit:
                 query = query.limit(limit)
             return query.execute().data or []
+
         return await asyncio.to_thread(run)
 
     async def get_row(self, table: str, row_id: str) -> dict[str, Any] | None:
@@ -46,30 +66,42 @@ class SupabaseStore:
             if not rows:
                 raise RuntimeError(f"No row returned after insert into {table}")
             return rows[0]
+
         return await asyncio.to_thread(run)
 
-    async def update_row(self, table: str, row_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    async def update_row(
+        self, table: str, row_id: str, data: dict[str, Any]
+    ) -> dict[str, Any] | None:
         def run() -> dict[str, Any] | None:
             rows = self.client.table(table).update(data).eq("id", row_id).execute().data or []
             return rows[0] if rows else None
+
         return await asyncio.to_thread(run)
 
     async def delete_row(self, table: str, row_id: str) -> bool:
         def run() -> bool:
             rows = self.client.table(table).delete().eq("id", row_id).execute().data or []
             return bool(rows)
+
         return await asyncio.to_thread(run)
 
-    async def upsert_row(self, table: str, data: dict[str, Any], *, on_conflict: str | None = None) -> dict[str, Any]:
+    async def upsert_row(
+        self, table: str, data: dict[str, Any], *, on_conflict: str | None = None
+    ) -> dict[str, Any]:
         def run() -> dict[str, Any]:
-            rows = self.client.table(table).upsert(data, on_conflict=on_conflict).execute().data or []
+            rows = (
+                self.client.table(table).upsert(data, on_conflict=on_conflict).execute().data or []
+            )
             if not rows:
                 raise RuntimeError(f"No row returned after upsert into {table}")
             return rows[0]
+
         return await asyncio.to_thread(run)
 
     async def rpc(self, function_name: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(lambda: self.client.rpc(function_name, params).execute().data or [])
+        return await asyncio.to_thread(
+            lambda: self.client.rpc(function_name, params).execute().data or []
+        )
 
     async def upload_file(self, bucket: str, path: str, content: bytes, mime_type: str) -> str:
         def run() -> str:
@@ -79,6 +111,7 @@ class SupabaseStore:
                 file_options={"content-type": mime_type, "upsert": "true"},
             )
             return path
+
         return await asyncio.to_thread(run)
 
     async def download_file(self, bucket: str, path: str) -> bytes:
@@ -88,11 +121,15 @@ class SupabaseStore:
         def run() -> str:
             result = self.client.storage.from_(bucket).create_signed_url(path, expires_in)
             return result.get("signedURL") or result.get("signedUrl") or ""
+
         return await asyncio.to_thread(run)
 
     async def get_user_from_token(self, token: str) -> dict[str, Any] | None:
         def run() -> dict[str, Any] | None:
-            response = self.client.auth.get_user(token)
+            try:
+                response = self.client.auth.get_user(token)
+            except AuthApiError:
+                return None
             user = response.user
             if not user:
                 return None
@@ -106,11 +143,17 @@ class SupabaseStore:
                 or []
             )
             if not memberships:
-                return None
+                return {
+                    "id": str(user.id),
+                    "firm_id": None,
+                    "role": None,
+                    "email": user.email or "",
+                }
             return {
                 "id": str(user.id),
                 "firm_id": memberships[0]["firm_id"],
                 "role": memberships[0]["role"],
                 "email": user.email or "",
             }
+
         return await asyncio.to_thread(run)
