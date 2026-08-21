@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: setup backend-install frontend-install test lint build dev seed demo-docs ingest clean
+.PHONY: setup backend-install frontend-install test lint build dev seed demo-docs ingest cleanup-whatsapp clean
 
 setup: backend-install frontend-install demo-docs
 
@@ -32,6 +32,9 @@ demo-docs:
 
 ingest:
 	python scripts/ingest_knowledge.py
+
+cleanup-whatsapp:
+	python scripts/cleanup_vonage_demo_sessions.py
 
 clean:
 	rm -rf .runtime backend/.pytest_cache backend/.ruff_cache frontend/.next frontend/node_modules

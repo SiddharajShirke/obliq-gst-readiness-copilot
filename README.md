@@ -1,329 +1,150 @@
 # OBLIQ GST Readiness Copilot
 
-A lightweight, end-to-end hiring-project prototype for Indian Chartered Accountant firms. OBLIQ takes a client’s GST period from document request to a structured, reviewed, filing-ready preparation package.
+OBLIQ is an existing FastAPI, Next.js, and Supabase prototype for GST document collection, extraction review, validation, GSTR-2B reconciliation, RAG assistance, reports, audit logs, and controlled WhatsApp workflows.
 
-> **Scope boundary:** This prototype does **not** file GST returns, pay GST, determine final ITC eligibility, store GST Portal credentials, or replace professional judgement. Every extracted field and outbound reminder remains subject to CA review.
+> **Product boundary:** OBLIQ does not file GST returns, pay GST, determine final ITC eligibility, store GST Portal credentials, or replace professional judgement. Extracted fields, validation findings, reconciliation differences, and outbound reminders remain subject to CA review.
 
 ## What the prototype demonstrates
 
-- Original responsive Next.js landing page and CA dashboard
-- Supabase email/password Auth with demo-token fallback
-- Multi-tenant Supabase PostgreSQL schema and Row-Level Security
-- `pgvector` and PostgreSQL full-text retrieval
-- Secure, expiring client upload links
-- Browser-based mock WhatsApp channel for the hosted demo
-- Optional Meta WhatsApp Cloud API adapter for local testing
-- PDF/image/CSV/XLSX/JSON classification and extraction
-- Controlled LangGraph document and reminder workflows
-- GSTIN/date/arithmetic/period/duplicate validation
-- Purchase Register ↔ simplified GSTR-2B reconciliation
-- Source-backed RAG assistant
-- Human approval gates and audit events
-- Readiness PDF and CSV exports
-- Five synthetic client scenarios and generated demo files
+- Next.js CA dashboard and Supabase email/password authentication with demo-token fallback
+- Multi-tenant PostgreSQL schema, RLS, private Storage, `pgvector`, and full-text retrieval
+- Secure expiring browser upload links
+- PDF/image/CSV/XLSX/JSON classification, parsing, OCR, and optional LLM extraction
+- Controlled LangGraph document, reminder, and assistant workflows
+- GST validation, Purchase Register to GSTR-2B reconciliation, citations, audit logs, and exports
+- Real Vonage Messages API Sandbox text connectivity with isolated temporary GST demo sessions
 
-## Architecture
+## Phase 1 WhatsApp architecture
 
-```mermaid
-flowchart TD
-    A[Original OBLIQ Landing Page] --> B[Supabase Auth / Demo Login]
-    B --> C[Next.js CA Dashboard]
-    C --> D[FastAPI /api/v1]
-    D --> E[(Supabase PostgreSQL)]
-    E --> V[pgvector + Full-Text Search]
-    D --> S[Private Supabase Storage or Local Demo Storage]
-    D --> W[Controlled LangGraph Workflows]
-    W --> P[Document Parsers / OCR / LLM Adapters]
-    P --> X[Structured Extraction]
-    X --> H[CA Review]
-    H --> G[GST Validation]
-    G --> R[Purchase Register ↔ GSTR-2B]
-    R --> Q[RAG Assistant + Citations]
-    Q --> O[Readiness PDF / CSV]
+The active live transport is the Vonage Messages API WhatsApp Sandbox:
 
-    D --> I{WhatsApp Provider}
-    I --> M[Mock Browser Client]
-    I --> META[Meta Cloud API]
-    META --> NG[ngrok HTTPS Webhook]
+```text
+GST application
+  -> isolated application/checklist clone
+  -> common Sandbox join QR + unique START QR
+  -> signed Vonage JSON inbound webhook
+  -> encrypted phone/session binding
+  -> real checklist text + STATUS/HELP/CANCEL
+  -> signed delivery callbacks
 ```
 
-## Two WhatsApp modes
+Each browser session receives a separate high-entropy dashboard token kept in `sessionStorage`. Each WhatsApp START token is short-lived, HMAC-hashed, single-use, and bound atomically. Judge phone numbers are HMAC-indexed, Fernet-encrypted, and displayed only in masked form.
 
-### 1. Hosted/self-contained demo
+The former browser chat simulator and active legacy provider have been removed. The mock provider exists only as an automated-test double.
 
-```env
-DEMO_MODE=true
-WHATSAPP_PROVIDER=mock
-AI_MODE=mock
-USE_IN_MEMORY_DB=true
-```
+## Phase 1 boundary
 
-The judge uses two browser views:
+> The Vonage Sandbox connection, real WhatsApp delivery, inbound text webhook, session isolation, and delivery-status tracking are implemented in this phase. Direct WhatsApp document-media download, Supabase document storage, AI extraction, and dashboard document display will be implemented in the next phase.
 
-- **CA dashboard:** creates and approves document requests/reminders.
-- **Demo client:** receives simulated WhatsApp messages and uploads synthetic files.
+Attachments are detected but never downloaded in Phase 1. OBLIQ stores sanitized message metadata, creates no document row, and sends a controlled phase-boundary response.
 
-Only the transport is simulated. Checklist updates, document parsing, extraction, validation, reconciliation, RAG, reports, and audit events use the actual backend workflow.
-
-### 2. Local real Meta test
-
-```env
-WHATSAPP_PROVIDER=meta
-ALLOW_LOCAL_CREDENTIAL_SETUP=true
-```
-
-The reviewer provides their own Meta developer credentials and verified test-recipient number. Meta’s test business number acts as the sender; the reviewer receives messages on their normal WhatsApp account. An HTTPS tunnel such as ngrok is required for inbound webhooks.
-
-See [`docs/meta-whatsapp-setup.md`](docs/meta-whatsapp-setup.md).
+The existing RAG, OCR, Gemini/Groq extraction, document viewers, secure upload, validation, reconciliation, reports, and audit systems are unchanged by this migration.
 
 ## Repository structure
 
 ```text
-.
-├── backend/                 FastAPI, agents, parsers, RAG, WhatsApp providers
-├── frontend/                Next.js App Router interface
-├── supabase/                SQL migrations, pgvector, RLS and storage setup
-├── scripts/                 demo generation, seed/reset, RAG and Meta helpers
-├── demo_data/               synthetic GST files, fixtures and knowledge
-├── docs/                    setup, deployment, architecture and walkthrough
-├── .env.example
-├── docker-compose.yml
-└── Makefile
+backend/       FastAPI, providers, agents, parsers, RAG, and domain services
+frontend/      Next.js App Router dashboard and secure upload interface
+supabase/      PostgreSQL migrations, pgvector, RLS, and Storage setup
+scripts/       seed, demo generation, knowledge ingestion, and cleanup commands
+demo_data/     synthetic GST fixtures and knowledge
+docs/          architecture, setup, deployment, walkthrough, and limitations
 ```
 
-## Fastest local run: self-contained mock mode
+## Quick start
 
-### Prerequisites
-
-- Python 3.11+
-- Node.js 22+
-- npm
-
-### Terminal 1 — backend
-
-```bash
-cp .env.example .env
-python -m venv .venv
-# macOS/Linux: source .venv/bin/activate
-# Windows PowerShell: .\.venv\Scripts\Activate.ps1
-python -m pip install -e './backend[dev]'
-python scripts/generate_demo_documents.py
-cd backend
-python -m uvicorn app.main:app --reload --port 8000
-```
-
-If PowerShell resolves `python`, `pip`, or `uvicorn` from different installations, do
-not activate the environment. Invoke its interpreter explicitly from the repository root:
+Requirements: Python 3.11+, Node.js 20+, npm, and optionally Supabase CLI and Docker.
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe" -m venv .venv
-& ".\.venv\Scripts\python.exe" -m pip install -e ".\backend[dev]"
-& ".\.venv\Scripts\python.exe" scripts\generate_demo_documents.py
+Copy-Item .env.example .env
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".\backend[dev]"
+.\.venv\Scripts\python.exe scripts\generate_demo_documents.py
+Set-Location frontend
+npm.cmd install
+Set-Location ..
+```
+
+Generate secure local values:
+
+```powershell
+.\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(48))"
+.\.venv\Scripts\python.exe -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Use the first command independently for `WHATSAPP_DEMO_TOKEN_PEPPER` and `WHATSAPP_PHONE_HASH_PEPPER`; use the second for `WHATSAPP_PHONE_ENCRYPTION_KEY`.
+
+Start the services in separate terminals:
+
+```powershell
 Set-Location backend
-& "..\.venv\Scripts\python.exe" -m uvicorn app.main:app --reload --port 8000
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
 ```
 
-### Terminal 2 — frontend
-
-```bash
-cd frontend
-npm install
-cp .env.local.example .env.local
-npm run dev
+```powershell
+Set-Location frontend
+npm.cmd run dev
 ```
 
-Open:
+For local Vonage callbacks:
 
-- Frontend: `http://localhost:3000`
-- FastAPI Swagger: `http://localhost:8000/docs`
-- Health: `http://localhost:8000/api/v1/health`
-- Mock client: `http://localhost:3000/demo-client`
-
-### Demo credentials
-
-| Role | Email | Password / Demo button |
-|---|---|---|
-| Partner / Firm Admin | `demo.admin@obliq.local` | `ChangeMe123!` or Partner demo button |
-| GST Preparer | `demo.preparer@obliq.local` | `ChangeMe123!` or Preparer demo button |
-| Reviewer | `demo.reviewer@obliq.local` | `ChangeMe123!` or Reviewer demo button |
-
-In in-memory demo mode, the frontend uses the demo role buttons and backend demo bearer tokens. Password credentials apply when Supabase Auth is configured and seeded.
-
-## Docker run
-
-```bash
-cp .env.example .env
-python scripts/generate_demo_documents.py
-docker compose up --build
+```powershell
+ngrok http 8000
 ```
 
-The first Docker build requires internet access to download Python and npm packages.
+Set `PUBLIC_BASE_URL` to the HTTPS ngrok origin, restart FastAPI, and configure the two callback URLs as described in [Vonage WhatsApp setup](docs/vonage-whatsapp-setup.md).
 
-## Supabase mode
+For Supabase-backed mode, install Docker and the Supabase CLI, then apply migrations and seed the existing synthetic data:
 
-1. Create a Supabase project or start the Supabase CLI locally.
-2. Apply all SQL files in `supabase/migrations/`.
-3. Fill in Supabase values in `.env`.
-4. Set:
-
-```env
-USE_IN_MEMORY_DB=false
+```powershell
+supabase start
+supabase db reset
+.\.venv\Scripts\python.exe scripts\seed_demo.py
+.\.venv\Scripts\python.exe scripts\ingest_knowledge.py
 ```
 
-5. Seed synthetic users and data:
+Set `USE_IN_MEMORY_DB=false` and retain the existing Supabase/Auth/Storage variables. Service-role credentials stay backend-only.
 
-```bash
-python scripts/seed_demo.py
+## Existing non-WhatsApp architecture
+
+The document graph still performs classification, parsing/extraction, persistence, deterministic validation, and human review. The reminder graph still requires CA approval for ordinary client reminders. The assistant still combines structured application facts with tenant-isolated hybrid retrieval and cited generation.
+
+Mock AI mode provides deterministic extraction and embeddings without paid model keys. Live AI mode continues to use the configured Groq/Gemini adapters and existing fallbacks. This Vonage phase does not route WhatsApp messages or attachments into those systems.
+
+Main API groups remain available under `/api/v1`, including clients, applications, documents, public secure upload, validation, reconciliation, assistant queries, reports, and audit. Swagger remains at `http://localhost:8000/docs`.
+
+## Verification
+
+```powershell
+Set-Location backend
+..\.venv\Scripts\python.exe -m pytest -q
+..\.venv\Scripts\python.exe -m ruff check app tests
+Set-Location ..\frontend
+npm.cmd test -- --run
+npm.cmd run lint
+npm.cmd run build
 ```
 
-6. Ingest demo knowledge if needed:
+Apply and verify Supabase migrations with the project CLI:
 
-```bash
-python scripts/ingest_knowledge.py
+```powershell
+supabase db reset
 ```
 
-The migrations create:
+Manual cleanup is available because this phase adds no scheduler:
 
-- relational application tables
-- `vector(384)` knowledge embeddings
-- HNSW cosine index
-- full-text GIN index
-- vector and lexical RPC functions
-- tenant-scoped RLS policies
-- private Storage buckets
-
-## RAG pipeline
-
-### Ingestion
-
-```text
-PDF / Markdown / TXT / HTML / DOCX
-→ checksum duplicate detection
-→ text extraction
-→ heading-aware chunks (900 characters, 140 overlap)
-→ 384-dimensional embeddings
-→ knowledge_sources + knowledge_chunks
+```powershell
+.\.venv\Scripts\python.exe scripts\cleanup_vonage_demo_sessions.py
 ```
-
-### Retrieval
-
-```text
-Question
-→ intent classification
-→ structured application facts when required
-→ vector RPC + full-text RPC
-→ reciprocal-rank fusion
-→ top context chunks
-→ answer with citations
-```
-
-Hosted mock mode uses deterministic 384-dimensional feature-hash vectors, avoiding model downloads. Live mode uses `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`.
-
-## AI provider modes
-
-```env
-AI_MODE=mock
-```
-
-- deterministic demo extraction fixtures
-- deterministic embeddings
-- deterministic RAG responses
-- no paid model keys required
-
-```env
-AI_MODE=live
-TEXT_LLM_PROVIDER=groq
-VISION_LLM_PROVIDER=gemini
-```
-
-Live adapters also support optional OpenAI fallback. The implementation uses deterministic parsers first; low-confidence invoice images or PDFs can be sent to Gemini document vision, while text-first irregular content can use the configured text LLM.
-
-## Main API groups
-
-- `/api/v1/clients`
-- `/api/v1/applications`
-- `/api/v1/documents`
-- `/api/v1/public/upload/{token}`
-- `/api/v1/applications/{id}/validate`
-- `/api/v1/applications/{id}/reconcile`
-- `/api/v1/assistant/query`
-- `/api/v1/webhooks/whatsapp`
-- `/api/v1/integrations/whatsapp/*`
-- `/api/v1/applications/{id}/export`
-
-Swagger documents the exact payloads at `/docs`.
-
-## Tests and verification
-
-```bash
-cd backend
-pytest
-ruff check app tests
-python -m compileall -q app ../scripts
-```
-
-Frontend:
-
-```bash
-cd frontend
-npm run test
-npm run lint
-npm run build
-```
-
-## Guided hiring-demo story
-
-1. Use **Partner demo** login.
-2. Click **Reset demo** on the dashboard so the guided scenario starts from a clean 0/5 checklist.
-3. Open **Raj Traders → April 2026**.
-4. Draft and approve the initial document request.
-5. Open **Demo Client** in another tab.
-6. Send built-in synthetic samples for four categories, leaving Purchase Register missing.
-7. Return to the CA dashboard and draft/approve a reminder.
-8. Upload the built-in Purchase Register sample.
-9. Review one extraction beside the original document.
-10. Run validation.
-11. Add duplicate/wrong-period samples if desired and run validation again.
-12. Run Purchase Register ↔ GSTR-2B reconciliation.
-13. Ask the RAG assistant why a mismatch is flagged.
-14. Export the readiness PDF and CSV files.
-15. Review the audit trail.
-
-Full detail: [`docs/demo-walkthrough.md`](docs/demo-walkthrough.md).
-
-## Manual deployment
-
-Suggested prototype deployment:
-
-- Frontend: Vercel
-- Backend: Render or Railway
-- Auth/database/storage: Hosted Supabase
-
-The public deployment should keep:
-
-```env
-DEMO_MODE=true
-WHATSAPP_PROVIDER=mock
-AI_MODE=mock
-ALLOW_LOCAL_CREDENTIAL_SETUP=false
-```
-
-No CI/CD is included by design. See [`docs/deployment.md`](docs/deployment.md).
 
 ## Security notes
 
-- Service-role keys and Meta tokens are backend-only.
-- Public upload tokens are random, hashed, expiring, and revocable.
-- Supabase application tables use RLS.
-- Storage buckets are private and accessed with signed URLs.
-- Meta webhook signatures are verified when an app secret is configured.
-- Local Meta credential storage is explicitly prototype-only and disabled on public deployment.
-- All supplied client and tax information is synthetic.
+- Supabase service-role, Vonage, LLM, Fernet, and HMAC secrets are backend-only.
+- Public upload tokens remain random, hashed, expiring, and revocable.
+- Application tables retain tenant RLS; private Storage continues to use signed URLs.
+- Vonage JSON webhooks are rejected before database writes unless their signed JWT, timestamp, API key, and raw-payload hash validate successfully.
+- All supplied demonstration client and tax information must remain synthetic.
 
-## Known limitations
+See [local setup](docs/local-setup.md), [deployment](docs/deployment.md), [architecture](docs/architecture.md), [demo walkthrough](docs/demo-walkthrough.md), and [limitations](docs/limitations.md).
 
-This is intentionally not production-grade. It omits real GST Portal filing, production secrets management, malware scanning, resilient job queues, high-scale OCR, official deadline synchronization, comprehensive tax-rule coverage, and external security certification.
-
-See [`docs/limitations.md`](docs/limitations.md).
-
-Verification evidence and environment-limited checks are recorded in [`docs/verification.md`](docs/verification.md).
+Never commit `.env`, frontend local environment files, Vonage credentials, Supabase service-role keys, LLM keys, Fernet keys, or HMAC peppers.

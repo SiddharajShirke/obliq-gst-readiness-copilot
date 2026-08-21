@@ -1,35 +1,25 @@
-# Guided Demo Walkthrough
+# Phase 1 live WhatsApp walkthrough
 
-## Goal
+1. Start Supabase, FastAPI, Next.js, and ngrok when local.
+2. Configure the Vonage Sandbox inbound and status webhooks with the public `PUBLIC_BASE_URL`.
+3. Log in to OBLIQ.
+4. Create or select any client and GST period.
+5. Open the GST workspace and click **Open Live WhatsApp Demo**.
+6. Confirm the client and period are application-specific.
+7. Scan the common Sandbox join QR and send the join message.
+8. Scan the unique START QR and send the START message.
+9. Confirm the dashboard becomes active and shows only masked phone digits.
+10. Confirm the real checklist arrives in WhatsApp.
+11. Send `STATUS`, `HELP`, a tax question, and an unsupported message.
+12. Confirm deterministic responses and CA-review escalation.
+13. Send an attachment and confirm OBLIQ does not download it or create a document row.
+14. Confirm the controlled Phase 1 media response.
+15. Confirm status callbacks update the last outbound delivery state.
+16. Cancel the session and confirm it can no longer receive workflow replies.
+17. Run the cleanup command and confirm expired phone data is anonymized.
 
-Show one continuous story: CA-approved document collection → missing-document reminder → structured extraction → validation → GSTR-2B reconciliation → cited explanation → readiness export.
+If Vonage forwards the Sandbox join phrase to the inbound webhook, OBLIQ
+silently acknowledges it after signature validation. It is not stored as a demo
+conversation message and does not generate an OBLIQ reply.
 
-## Steps
-
-1. Open `/auth/login` and choose **Partner**.
-2. Click **Reset demo** on the dashboard to restore the clean guided state.
-3. Open **Raj Traders** and its **April 2026** GST application.
-4. Click **Draft request**.
-5. Read or edit the message, then click **Approve & send**.
-6. Open **Open client demo** in a new tab.
-7. Choose Raj Traders.
-8. Use built-in synthetic samples to send Sales Register, Sales Invoices, Purchase Invoices and GSTR-2B. Leave Purchase Register missing.
-9. Return to the CA workspace. The checklist remains 4/5 and Purchase Register is missing.
-10. Click **Draft reminder**, review it, then approve and send.
-11. Return to the client tab and send the built-in Purchase Register sample.
-12. Open **Documents & Extraction**. Select a file, compare its original and JSON, edit one value if desired, and approve it.
-13. Add `Purchase_Invoice_Arithmetic_Mismatch.pdf`, `Purchase_Invoice_Wrong_Period.pdf`, and duplicate samples from the local demo folder if running locally.
-14. Open **Validation** and run all checks.
-15. Open **GSTR-2B Reconciliation** and run matching.
-16. Open **RAG Assistant** and ask “What does a GSTR-2B mismatch mean?”
-17. Confirm that the response displays a source.
-18. Return to Overview and export the readiness pack.
-19. Open Audit Trail to show the sequence of actions.
-
-## What to emphasize
-
-- WhatsApp is provider-neutral: hosted mock vs optional local Meta.
-- LLMs do not calculate tax or control authorization.
-- Parsers and deterministic checks are used before AI.
-- The CA reviews extracted fields and outbound communication.
-- Client facts come from PostgreSQL; RAG provides sourced explanation.
+This Sandbox walkthrough is intentionally limited to one judge at a time. Do not claim real delivery was verified unless this flow was executed with real Vonage credentials, an allow-listed WhatsApp device, and a public HTTPS webhook.

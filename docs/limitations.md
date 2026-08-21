@@ -1,19 +1,16 @@
-# Prototype Limitations
+# Limitations
 
-- No direct GST Portal, ASP or GSP integration
-- No automatic filing, DSC/EVC signing or tax payment
-- No final ITC eligibility or liability decision
-- Simplified GSTR-2B input format and matching rules
-- OCR quality depends on local Tesseract or configured vision model
-- Mock AI fixtures cover known demonstration files
-- No malware scanner or document content-disarm pipeline
-- No resilient background queue; processing occurs in-request
-- No enterprise secret manager, key rotation or production Meta onboarding
-- No real-time statutory deadline synchronization
-- No CI/CD, autoscaling, multi-region operation or production observability
-- Minimal tests focused on core workflow logic
-- Public hosted demo must use synthetic data only
+- The Vonage Messages API Sandbox is intended for initial functional exploration, not QA/staging or production.
+- The OBLIQ walkthrough supports one judge at a time. The judge must send the Sandbox allow-list message; OBLIQ cannot automatically confirm that action.
+- The Sandbox is limited to 100 messages per month across channels and one message per second; excess requests may receive HTTP 429.
+- Sandbox membership and the 24-hour customer-care window are controlled by Vonage and WhatsApp.
+- Phase 1 supports deterministic text commands only: `STATUS`, `HELP`, and `CANCEL`.
+- WhatsApp media is detected but not downloaded, stored, classified, extracted, or shown in the dashboard.
+- WhatsApp tax/legal questions are escalated for CA review and are not answered by RAG or an LLM.
+- Cleanup is opportunistic plus a manual command; no scheduler or distributed worker is included.
+- The in-process rate limiter is prototype-local and does not coordinate across multiple FastAPI replicas.
+- Real delivery requires external Vonage credentials, an allow-listed device, and a public HTTPS callback.
 
-## Production next steps
+Existing secure browser uploads, document processing, OCR, AI extraction, document viewers, RAG, validation, reconciliation, reports, and audit functionality remain separate from the Vonage media path.
 
-A real system would add audited GST integrations, encrypted secrets management, asynchronous job queues, antivirus scanning, model evaluation, formal authorization review, deadline-rule versioning, observability, backups, rate limiting, security testing, and professional compliance validation.
+General prototype limitations remain: no direct GST Portal/ASP/GSP filing, DSC/EVC signing, payment, final ITC decision, enterprise secret manager, malware/content-disarm pipeline, resilient distributed job queue, multi-region operation, external security certification, or real-time statutory deadline synchronization. OCR quality and simplified reconciliation rules continue to require CA review.

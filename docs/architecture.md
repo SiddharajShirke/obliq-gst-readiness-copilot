@@ -1,42 +1,45 @@
 # Architecture
 
-## Product boundary
+OBLIQ keeps its existing Next.js App Router frontend, FastAPI API, tenant-aware repository abstraction, Supabase PostgreSQL/Storage foundation, document processing, validation, reconciliation, RAG, reports, and audit services.
 
-OBLIQ GST Readiness Copilot covers the operational workflow before filing: client creation, period checklist, approved WhatsApp requests, secure upload, extraction, review, validation, reconciliation, RAG explanation, readiness export, and optional post-filing evidence recording.
+## Product and component boundaries
 
-It does not perform statutory filing or make final tax decisions.
+The Next.js application provides authentication, CA workspaces, client/application management, secure upload, extraction review, validation, reconciliation, reports, audit history, knowledge administration, and the live WhatsApp connection page. It never receives server credentials.
 
-## Components
+FastAPI exposes the versioned API and resolves a Supabase bearer token or the existing synthetic demo identity. Domain operations retain firm context and role checks. `MemoryStore` remains available for automated tests and the existing self-contained data fixtures; `SupabaseStore` remains the deployed PostgreSQL/Auth/Storage implementation.
 
-### Next.js frontend
+Controlled workflows remain unchanged:
 
-Public routes provide the original landing page, Supabase authentication, the secure upload form, and a labelled mock WhatsApp client. Protected routes provide client and application management, extraction review, validation, reconciliation, RAG, audit logs, knowledge ingestion, and local Meta configuration.
+- Document graph: load, classify, parse/extract, persist, validate, human review
+- Reminder graph: checklist, missing items, draft, CA approval, provider send
+- Assistant graph: classify intent, load structured facts, tenant-scoped retrieval, cited answer
 
-### FastAPI backend
+OBLIQ supports readiness work before filing; it does not file returns or make final tax/legal decisions.
 
-FastAPI exposes a versioned REST interface and Swagger. Authentication dependencies resolve either a Supabase bearer token or a synthetic demo token. Every domain operation receives a firm context.
+## Vonage Phase 1 boundary
 
-### DataStore abstraction
+The WhatsApp provider protocol exposes only text sending and webhook validation. `VonageWhatsAppProvider` sends free-form text through the Vonage Messages API Sandbox using the existing asynchronous HTTP client stack; conversation rules remain in the conversation service.
 
-- `MemoryStore`: self-contained hosted/local demo; private local files and deterministic seed data.
-- `SupabaseStore`: PostgreSQL, Auth-linked profiles, private Storage and pgvector RPCs.
+FastAPI exposes:
 
-### Controlled agents
+- `POST /api/v1/applications/{application_id}/whatsapp-demo-sessions`
+- `GET /api/v1/whatsapp-demo-sessions/{session_id}`
+- `POST /api/v1/whatsapp-demo-sessions/{session_id}/cancel`
+- `POST /api/v1/whatsapp-demo-sessions/{session_id}/regenerate-start-token`
+- `POST /api/v1/webhooks/vonage/whatsapp`
+- `POST /api/v1/webhooks/vonage/status`
+- `GET /api/v1/integrations/whatsapp/status`
 
-LangGraph coordinates deterministic nodes. It does not allow unrestricted autonomous actions.
+The creation RPC atomically creates a session, clones the selected GST application, resets workflow-result fields, clones its requirements, resets them to `missing`, and links the clone. Normal application queries filter on `demo_session_id is null`.
 
-- Document graph: load → classify → parse/extract → persist → validate → human review.
-- Reminder graph: checklist → missing items → draft → approval → provider send.
-- Assistant graph: classify intent → load structured facts → retrieve knowledge → cited answer.
+The binding RPC locks the START token row, verifies expiry/single-use state, cancels another active session for the same phone hash, stores protected phone fields, nulls the token hash, and activates the session.
 
-### WhatsApp providers
+Vonage webhooks are JSON. The backend validates the bearer JWT with the backend-only signature secret, verifies the `Vonage` issuer, configured API key, timestamp, and SHA-256 `payload_hash` over the exact raw request body. No state changes occur before validation. Vonage `message_uuid` provides idempotency.
 
-Both providers implement the same interface. `MockWhatsAppProvider` writes messages to the normal message table for the browser client. `MetaWhatsAppProvider` calls Graph API and converts webhook payloads into the same internal event shape.
+The browser never accesses session tables directly. Status, cancellation, and regeneration require both Supabase authentication and `X-OBLIQ-Demo-Access-Token`.
 
-## Trust boundaries
+Phone data is HMAC-SHA256 indexed, Fernet encrypted, masked for display, anonymized at expiry, and removed with temporary session data after retention. No raw full phone is written to ordinary logs or API responses.
 
-- Browser receives only anon Supabase keys and user JWTs.
-- Service-role, LLM and Meta secrets remain in FastAPI.
-- Public clients upload through a token endpoint, not direct privileged database calls.
-- Client facts come from structured rows; RAG is used for explanation and guidance.
-- Human approval is mandatory before outbound reminders and final extraction acceptance.
+Media URLs are not fetched. Phase 1 stores only media count/content-type metadata and sends a controlled response.
+
+Existing private Storage signed URLs, OCR and document parsers, Gemini/Groq adapters, hybrid `pgvector`/full-text retrieval, firm-specific knowledge isolation, validation, reconciliation, exports, and document viewers are outside this migration and retain their existing design.
