@@ -1,4 +1,4 @@
-import { formatStatus, statusTone } from "@/lib/format";
+import { formatStatus, statusTone } from "../../lib/format";
 
 const states = {
   success: "bg-emerald-50 text-emerald-700 border-emerald-200",
