@@ -6,7 +6,6 @@ import {
   Circle,
   ClipboardCheck,
   FileText,
-  LockKeyhole,
   MessageCircleMore,
   RefreshCw,
   Send,
@@ -16,6 +15,7 @@ import {useParams, useRouter} from "next/navigation";
 import {useCallback, useEffect, useMemo, useState} from "react";
 import {toast} from "sonner";
 import {AuditTrailPanel} from "@/components/audit/audit-trail-panel";
+import {RagAssistantDrawer} from "@/components/assistant/assistant-panel";
 import {PageHeader} from "@/components/dashboard/page-header";
 import {DocumentPanel} from "@/components/documents/document-panel";
 import {FindingsPanel} from "@/components/documents/findings-panel";
@@ -42,10 +42,10 @@ import {
   savePendingWhatsAppDraft,
 } from "@/lib/whatsapp-demo";
 
-type Tab = "overview" | "documents" | "validation" | "reconciliation" | "assistant" | "audit";
+type Tab = "overview" | "documents" | "validation" | "reconciliation" | "audit";
 type DraftKind = "request" | "reminder";
 
-const tabs: Array<[Tab, string]> = [
+const tabs: Array<[Tab | "assistant", string]> = [
   ["overview", "Overview"],
   ["documents", "Documents & Extraction"],
   ["validation", "Validation"],
@@ -56,16 +56,6 @@ const tabs: Array<[Tab, string]> = [
 
 const laterStages = ["Ready for CA Review", "Ready for Filing"];
 
-function unavailable(title: string, description: string) {
-  return <Card className="grid min-h-72 place-items-center p-8 text-center">
-    <div className="max-w-xl">
-      <LockKeyhole className="mx-auto text-[#8a8480]" size={34}/>
-      <h2 className="mt-4 text-xl font-bold">{title}</h2>
-      <p className="mt-2 text-sm leading-6 text-[#77716e]">{description}</p>
-    </div>
-  </Card>;
-}
-
 export default function ApplicationWorkspace() {
   const {applicationId} = useParams<{applicationId: string}>();
   const router = useRouter();
@@ -73,6 +63,7 @@ export default function ApplicationWorkspace() {
   const [collection, setCollection] = useState<DocumentCollectionStatus | null>(null);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [tab, setTab] = useState<Tab>("overview");
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState<Reminder | null>(null);
@@ -267,7 +258,7 @@ export default function ApplicationWorkspace() {
     </Card>
 
     <div className="mb-6 flex gap-1 overflow-x-auto rounded-2xl border border-[var(--obliq-border)] bg-[var(--obliq-surface)] p-1">
-      {tabs.map(([value, label]) => <button key={value} onClick={() => setTab(value)} className={`obliq-focus whitespace-nowrap rounded-xl px-4 py-2.5 text-sm font-semibold transition ${tab === value ? "obliq-selected" : "obliq-interactive"}`}>{label}</button>)}
+      {tabs.map(([value, label]) => <button key={value} onClick={() => value === "assistant" ? setAssistantOpen(true) : setTab(value)} className={`obliq-focus whitespace-nowrap rounded-xl px-4 py-2.5 text-sm font-semibold transition ${value !== "assistant" && tab === value ? "obliq-selected" : "obliq-interactive"}`}>{label}</button>)}
     </div>
 
     {tab === "overview" && <div className="grid gap-6 xl:grid-cols-[1.2fr_.8fr]">
@@ -319,8 +310,18 @@ export default function ApplicationWorkspace() {
     {tab === "documents" && <DocumentPanel applicationId={displayApplicationId} checklist={collection.requirements} onChanged={load}/>}
     {tab === "validation" && <FindingsPanel applicationId={displayApplicationId} onChanged={load}/>}
     {tab === "reconciliation" && <ReconciliationPanel applicationId={displayApplicationId} onChanged={load}/>}
-    {tab === "assistant" && unavailable("RAG Assistant unavailable for uploaded documents", "Document RAG is intentionally deferred to Phase 4. No uploaded document content is indexed or queried in Phase 3.")}
     {tab === "audit" && <AuditTrailPanel events={audit}/>}
+
+    <RagAssistantDrawer
+      applicationId={displayApplicationId}
+      clientName={clientName}
+      period={application.period_label}
+      missingCount={collection.missing_count}
+      hasExtraction={extractionStarted}
+      hasReconciliation={reconciliationStarted}
+      open={assistantOpen}
+      onOpenChange={setAssistantOpen}
+    />
 
     {draft && <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 p-4" onClick={() => void cancelDraft()}>
       <Card className="w-full max-w-2xl p-6 shadow-2xl" onClick={event => event.stopPropagation()}>

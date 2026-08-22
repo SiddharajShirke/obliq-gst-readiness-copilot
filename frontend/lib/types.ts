@@ -264,10 +264,25 @@ export type DocumentCollectionStatus = {
 };
 
 export type Citation = {
+  source_type: "structured_fact" | "document" | "reconciliation" | "alert" | "knowledge" | string;
   title: string;
+  reference?: string;
+  document_id?: string;
   section?: string;
   page?: string | number;
+  sheet_name?: string;
+  row_start?: number;
+  row_end?: number;
   source_url?: string;
+};
+
+export type AssistantAnswer = {
+  answer: string;
+  citations: Citation[];
+  conversation_id: string;
+  source_types: string[];
+  used_application_data: boolean;
+  confidence: number;
 };
 
 export type AuditEvent = {
