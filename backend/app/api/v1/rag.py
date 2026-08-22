@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from app.agents.rag_assistant import RAGAssistant
 from app.config import Settings, get_settings
-from app.dependencies import current_user, require_roles
+from app.dependencies import current_user, require_firm_row, require_roles
 from app.repositories import DataStore, get_store
 from app.schemas.auth import UserContext
 from app.schemas.rag import AssistantAnswer, AssistantQuery, KnowledgeTextIngest
@@ -31,9 +31,17 @@ async def upload_knowledge(
     content = await file.read()
     filename = file.filename or "knowledge.txt"
     digest = hashlib.sha256(content).hexdigest()
-    safe_name = "".join(character if character.isalnum() or character in ".-_" else "_" for character in Path(filename).name)
+    safe_name = "".join(
+        character if character.isalnum() or character in ".-_" else "_"
+        for character in Path(filename).name
+    )
     storage_path = f"{user.firm_id}/knowledge/{digest[:12]}-{safe_name}"
-    await store.upload_file(settings.supabase_knowledge_bucket, storage_path, content, file.content_type or "application/octet-stream")
+    await store.upload_file(
+        settings.supabase_knowledge_bucket,
+        storage_path,
+        content,
+        file.content_type or "application/octet-stream",
+    )
     try:
         return await ingest_bytes(
             store,
@@ -61,7 +69,10 @@ async def ingest_knowledge_text(
     if payload.shared_official:
         raise HTTPException(
             status_code=403,
-            detail="Shared official knowledge can only be installed by a trusted seed or operator process",
+            detail=(
+                "Shared official knowledge can only be installed by a trusted seed "
+                "or operator process"
+            ),
         )
     firm_id = user.firm_id
     return await ingest_text(
@@ -92,9 +103,12 @@ async def assistant_query(
     store: Annotated[DataStore, Depends(get_store)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict:
+    await require_firm_row(store, "applications", payload.application_id, user.firm_id)
     return await RAGAssistant(store, settings).query(
         question=payload.question,
         firm_id=user.firm_id,
         application_id=payload.application_id,
+        user_id=user.user_id,
+        conversation_id=str(payload.conversation_id),
         source_type=payload.source_type,
     )

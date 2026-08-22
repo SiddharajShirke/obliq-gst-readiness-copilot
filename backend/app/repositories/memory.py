@@ -168,6 +168,8 @@ class MemoryStore:
             "integration_settings": [],
             "knowledge_sources": [],
             "knowledge_chunks": [],
+            "document_chunks": [],
+            "assistant_messages": [],
             "alerts": [],
             "audit_events": [],
             "workflow_runs": [],
@@ -471,6 +473,7 @@ class MemoryStore:
                 "validation_findings",
                 "reconciliation_items",
                 "knowledge_chunks",
+                "document_chunks",
             }:
                 row.setdefault("updated_at", now)
             self.tables.setdefault(table, []).append(row)
@@ -837,6 +840,46 @@ class MemoryStore:
                         }
                     )
             return sorted(results, key=lambda row: row["rank"], reverse=True)[:count]
+        if function_name == "match_application_document_chunks":
+            query = params.get("query_embedding") or []
+            firm_id = str(params.get("user_firm_id") or "")
+            application_id = str(params.get("target_application_id") or "")
+            minimum = float(params.get("min_similarity", 0.0))
+            count = int(params.get("match_count", 8))
+            results = []
+            for row in self.tables.get("document_chunks", []):
+                if str(row.get("firm_id")) != firm_id:
+                    continue
+                if str(row.get("application_id")) != application_id:
+                    continue
+                if row.get("document_type") == "developer_ground_truth":
+                    continue
+                embedding = row.get("embedding") or []
+                if not embedding or len(embedding) != len(query):
+                    continue
+                dot = sum(float(a) * float(b) for a, b in zip(embedding, query, strict=True))
+                qn = math.sqrt(sum(float(value) ** 2 for value in query)) or 1
+                en = math.sqrt(sum(float(value) ** 2 for value in embedding)) or 1
+                similarity = dot / (qn * en)
+                if similarity < minimum:
+                    continue
+                results.append(
+                    {
+                        "chunk_id": row["id"],
+                        "document_id": row["document_id"],
+                        "application_id": row["application_id"],
+                        "document_type": row["document_type"],
+                        "content": row["content"],
+                        "metadata": row.get("metadata", {}),
+                        "page_number": row.get("page_number"),
+                        "sheet_name": row.get("sheet_name"),
+                        "row_start": row.get("row_start"),
+                        "row_end": row.get("row_end"),
+                        "section": row.get("section"),
+                        "similarity": similarity,
+                    }
+                )
+            return sorted(results, key=lambda row: row["similarity"], reverse=True)[:count]
         return []
 
     async def upload_file(self, bucket: str, path: str, content: bytes, mime_type: str) -> str:

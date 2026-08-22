@@ -20,7 +20,10 @@ def reciprocal_rank_fusion(
     for result_set, channel in ((vector_results, "vector"), (lexical_results, "lexical")):
         for rank, row in enumerate(result_set, start=1):
             chunk_id = str(row["chunk_id"])
-            target = combined.setdefault(chunk_id, {**deepcopy(row), "rrf_score": 0.0, "channels": []})
+            target = combined.setdefault(
+                chunk_id,
+                {**deepcopy(row), "rrf_score": 0.0, "channels": []},
+            )
             target["rrf_score"] += 1 / (k + rank)
             target["channels"].append(channel)
             if channel == "vector":
@@ -59,3 +62,25 @@ async def retrieve_knowledge(
         },
     )
     return reciprocal_rank_fusion(vector_results, lexical_results)[: settings.rag_final_top_k]
+
+
+async def retrieve_application_documents(
+    store: DataStore,
+    settings: Settings,
+    *,
+    question: str,
+    firm_id: str,
+    application_id: str,
+) -> list[dict[str, Any]]:
+    query_embedding = embed_texts([question], settings)[0]
+    rows = await store.rpc(
+        "match_application_document_chunks",
+        {
+            "query_embedding": query_embedding,
+            "user_firm_id": firm_id,
+            "target_application_id": application_id,
+            "match_count": settings.rag_vector_top_k,
+            "min_similarity": settings.rag_min_similarity,
+        },
+    )
+    return rows[: settings.rag_final_top_k]
