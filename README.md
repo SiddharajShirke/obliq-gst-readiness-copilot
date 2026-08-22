@@ -39,9 +39,31 @@ After a valid START, OBLIQ confirms the live connection. A CA then reviews a che
 
 The workspace uses one canonical collection summary for required/received/missing counts, percentage, checklist, requests, reminders, and Vonage `STATUS`. Reminders are rebuilt from the live missing rows and reuse the existing active session. An expired or cancelled session can be reconnected explicitly during the 24-hour retention period: the same clone, checklist, uploaded documents, and progress are retained while the old phone binding is cleared and a new single-use START token is issued.
 
-Secure browser uploads stop at `awaiting_processing`. They do not invoke OCR, classification, Gemini, Groq, LangGraph extraction, embeddings, or RAG. The session and CA dashboard poll for stored-document status and display **Uploaded / Awaiting Processing** without claiming extraction or review completion.
+The Phase 2 intake transaction stops at `awaiting_processing`; Phase 3 consumes that state in
+the existing controlled document graph. The upload response never falsely claims extraction
+or review completion, and the dashboard polls the later processing status.
 
 Direct WhatsApp attachments remain deliberately deferred: OBLIQ detects them, stores sanitized message metadata, downloads no provider media, creates no document row, and directs the judge to the secure browser link. The existing AI/RAG, document viewer, validation, reconciliation, and report architectures are not redesigned.
+
+## Phase 3 structured GST review
+
+The active client checklist now contains six categories: Sales Register, Purchase Register,
+Sales Invoices, Purchase & Expense Invoices, Credit & Debit Notes, and GST Special
+Transactions. GSTR-2B is uploaded separately from the reconciliation tab and never affects
+client collection progress. A detected Dataset Index/Ground Truth file is retained only as
+an excluded developer reference; it is never parsed into GST records, sent to AI, reconciled,
+or indexed for RAG.
+
+Individual, browser-folder, and safe ZIP uploads share one ingestion pipeline. Original
+files remain in private Supabase Storage. CSV/XLSX/JSON and text documents are parsed
+deterministically first; deployment-packaged Tesseract handles scanned-page text, the hosted
+NVIDIA endpoint handles lightweight structured assistance, and Groq is the controlled heavy
+fallback. Gemini is not an active Phase 3 dependency.
+
+Purchase-side records reconcile against parsed GSTR-2B with exact Decimal comparisons.
+There is no monetary tolerance. Alerts are created only after a CA presses **Raise Alert**;
+NVIDIA then explains the immutable evidence, with Groq as a failure fallback. AI never
+changes source values, reconciliation outcomes, ITC status, or alert lifecycle.
 
 ## Repository structure
 
