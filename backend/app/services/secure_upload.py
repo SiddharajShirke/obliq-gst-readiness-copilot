@@ -260,6 +260,33 @@ async def public_upload_context(
     documents = await store.list_rows(
         "documents", {"application_id": context.application["id"]}, order="created_at", desc=True
     )
+    link_documents = [
+        document
+        for document in documents
+        if str(document.get("upload_link_id") or "") == str(context.link["id"])
+    ]
+    batches = await store.list_rows(
+        "document_submission_batches",
+        {"upload_link_id": context.link["id"]},
+        order="submitted_at",
+        desc=True,
+        limit=1,
+    )
+    latest_batch = None
+    if batches:
+        batch = batches[0]
+        latest_batch = {
+            key: batch.get(key)
+            for key in (
+                "id",
+                "status",
+                "document_count",
+                "completed_count",
+                "failed_count",
+                "submitted_at",
+                "completed_at",
+            )
+        }
     latest_by_requirement: dict[str, dict[str, Any]] = {}
     for document in documents:
         requirement_id = document.get("requirement_id")
@@ -271,6 +298,7 @@ async def public_upload_context(
         checklist.append(
             {
                 "id": requirement["id"],
+                "requirement_type": requirement.get("requirement_type"),
                 "label": requirement["label"],
                 "required": requirement.get("required", True),
                 "status": requirement["status"],
@@ -286,6 +314,12 @@ async def public_upload_context(
             "due_date": context.application.get("due_date"),
         },
         "checklist": checklist,
+        "ready_to_submit_count": sum(
+            document.get("processing_status") == "awaiting_submission"
+            and not document.get("submission_batch_id")
+            for document in link_documents
+        ),
+        "latest_submission_batch": latest_batch,
     }
 
 
@@ -400,6 +434,19 @@ async def store_secure_document(
         if not rows:
             raise RuntimeError("Secure upload could not be finalized")
         document = rows[0]
+        document = (
+            await store.update_row(
+                "documents",
+                document_id,
+                {
+                    "processing_status": "awaiting_submission",
+                    "upload_link_id": context.link["id"],
+                    "submission_batch_id": None,
+                    "submitted_at": None,
+                },
+            )
+            or document
+        )
         finalized = True
         await record_audit(
             store,
@@ -413,7 +460,7 @@ async def store_secure_document(
             demo_session_id=context.application.get("demo_session_id"),
             after_data={
                 "requirement_id": requirement["id"],
-                "processing_status": "awaiting_processing",
+                "processing_status": "awaiting_submission",
             },
         )
         await record_audit(

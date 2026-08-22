@@ -54,7 +54,7 @@ async def test_two_sessions_clone_application_and_checklist_without_touching_bas
     second_checklist = await store.list_rows(
         "document_requirements", {"application_id": second.session_application_id}
     )
-    assert len(first_checklist) == len(second_checklist) == len(base_checklist_before) == 5
+    assert len(first_checklist) == len(second_checklist) == len(base_checklist_before) == 6
     assert {row["id"] for row in first_checklist}.isdisjoint(
         {row["id"] for row in second_checklist}
     )
@@ -75,13 +75,16 @@ async def test_dashboard_token_and_regenerated_start_token_are_single_session_se
 
     regenerated = await regenerate_start_token(store, settings, created.session_id)
     assert regenerated.start_token != created.start_token
-    assert await bind_demo_session(
-        store,
-        settings,
-        start_token=created.start_token,
-        sender_phone="whatsapp:+919876543210",
-        provider_user_id="919876543210",
-    ) is None
+    assert (
+        await bind_demo_session(
+            store,
+            settings,
+            start_token=created.start_token,
+            sender_phone="whatsapp:+919876543210",
+            provider_user_id="919876543210",
+        )
+        is None
+    )
     bound = await bind_demo_session(
         store,
         settings,
@@ -104,13 +107,16 @@ async def test_cancelled_session_cannot_bind_and_does_not_affect_another_session
 
     await cancel_demo_session(store, first.session_id)
 
-    assert await bind_demo_session(
-        store,
-        settings,
-        start_token=first.start_token,
-        sender_phone="+919876543210",
-        provider_user_id=None,
-    ) is None
+    assert (
+        await bind_demo_session(
+            store,
+            settings,
+            start_token=first.start_token,
+            sender_phone="+919876543210",
+            provider_user_id=None,
+        )
+        is None
+    )
     assert (await store.get_row("whatsapp_demo_sessions", second.session_id))["status"] == (
         "waiting_for_start"
     )
@@ -149,9 +155,7 @@ async def test_cleanup_anonymizes_expired_phone_and_deletes_only_retained_sessio
     assert await store.get_row("whatsapp_demo_sessions", created.session_id) is None
     assert await store.get_row("applications", created.session_application_id) is None
     assert await store.get_row("applications", APP_ID) is not None
-    assert not await store.list_rows(
-        "whatsapp_messages", {"demo_session_id": created.session_id}
-    )
+    assert not await store.list_rows("whatsapp_messages", {"demo_session_id": created.session_id})
 
 
 @pytest.mark.asyncio

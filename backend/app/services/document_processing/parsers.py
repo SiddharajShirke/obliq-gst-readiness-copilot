@@ -7,13 +7,23 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from app.schemas.documents import NormalizedGSTRecord
+
 COLUMN_ALIASES = {
-    "invoice_number": {"invoice no", "invoice number", "invoice_no", "inv no", "bill no", "document number"},
+    "invoice_number": {
+        "invoice no",
+        "invoice number",
+        "invoice_no",
+        "inv no",
+        "bill no",
+        "document number",
+    },
     "invoice_date": {"invoice date", "invoice_date", "date", "bill date", "document date"},
     "supplier_name": {"supplier", "supplier name", "vendor", "vendor name", "party name"},
     "supplier_gstin": {"supplier gstin", "vendor gstin", "gstin", "supplier_gst_no"},
@@ -25,12 +35,30 @@ COLUMN_ALIASES = {
     "igst": {"igst", "igst amount", "igst_amt"},
     "cess": {"cess", "cess amount"},
     "invoice_total": {"total", "invoice total", "invoice value", "grand total", "gross amount"},
+    "gst_rate": {"gst rate", "tax rate", "rate %", "gst %"},
+    "itc_status": {"itc status", "itc availability", "itc eligibility"},
+    "rcm_flag": {"rcm", "rcm flag", "reverse charge", "reverse charge flag"},
+    "transaction_type": {"transaction type", "supply type", "purchase/expense type", "note type"},
+    "original_document_reference": {
+        "original invoice reference",
+        "original document reference",
+        "original invoice",
+    },
+    "place_of_supply": {"place of supply", "pos"},
+    "hsn_sac": {"hsn/sac", "hsn", "sac"},
 }
 
 
 @dataclass(slots=True)
 class ParsedTable:
     rows: list[dict[str, Any]]
+    summary: dict[str, Any]
+    column_mapping: dict[str, str]
+
+
+@dataclass(slots=True)
+class ParsedNormalizedTable:
+    records: list[NormalizedGSTRecord]
     summary: dict[str, Any]
     column_mapping: dict[str, str]
 
@@ -58,6 +86,32 @@ def _to_float(value: Any) -> float:
         return float(text)
     except ValueError:
         return 0.0
+
+
+def _to_decimal_optional(value: Any) -> Decimal | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    text = str(value).replace(",", "").replace("₹", "").strip()
+    if not text:
+        return None
+    try:
+        return Decimal(text).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _to_bool_optional(value: Any) -> bool | None:
+    text = str(value or "").strip().lower()
+    if text in {"yes", "y", "true", "1", "applicable"}:
+        return True
+    if text in {"no", "n", "false", "0", "not applicable"}:
+        return False
+    return None
+
+
+def _mapped_value(source: Any, mapping: dict[str, str], field: str) -> Any:
+    column = mapping.get(field)
+    return source.get(column) if column else None
 
 
 def _to_iso_date(value: Any) -> str | None:
@@ -100,9 +154,11 @@ def parse_tabular_document(content: bytes, extension: str, *, category: str) -> 
             "invoice_number": str(source.get(mapping["invoice_number"], "")).strip(),
             "invoice_date": _to_iso_date(source.get(mapping.get("invoice_date", ""))),
             "supplier_name": str(source.get(mapping.get("supplier_name", ""), "")).strip() or None,
-            "supplier_gstin": str(source.get(mapping.get("supplier_gstin", ""), "")).strip().upper() or None,
+            "supplier_gstin": str(source.get(mapping.get("supplier_gstin", ""), "")).strip().upper()
+            or None,
             "customer_name": str(source.get(mapping.get("customer_name", ""), "")).strip() or None,
-            "customer_gstin": str(source.get(mapping.get("customer_gstin", ""), "")).strip().upper() or None,
+            "customer_gstin": str(source.get(mapping.get("customer_gstin", ""), "")).strip().upper()
+            or None,
         }
         for field in ("taxable_value", "cgst", "sgst", "igst", "cess", "invoice_total"):
             record[field] = _to_float(source.get(mapping.get(field, ""), 0))
@@ -121,6 +177,94 @@ def parse_tabular_document(content: bytes, extension: str, *, category: str) -> 
     return ParsedTable(rows=rows, summary=summary, column_mapping=mapping)
 
 
+def parse_normalized_table(
+    content: bytes,
+    extension: str,
+    *,
+    document_type: str,
+    source_document_id: str,
+    tax_period: str | None,
+) -> ParsedNormalizedTable:
+    extension = extension.lower()
+    if extension == ".csv":
+        frame = pd.read_csv(io.BytesIO(content))
+    elif extension in {".xlsx", ".xls"}:
+        frame = pd.read_excel(io.BytesIO(content))
+    elif extension == ".json":
+        payload = json.loads(content.decode("utf-8-sig"))
+        if isinstance(payload, dict):
+            payload = payload.get("records") or payload.get("invoices") or payload.get("b2b") or []
+        frame = pd.DataFrame(payload)
+    else:
+        raise ValueError(f"Unsupported tabular extension: {extension}")
+    mapping = map_columns(list(frame.columns))
+    if "invoice_number" not in mapping:
+        raise ValueError("Could not identify a document-number column")
+
+    records: list[NormalizedGSTRecord] = []
+    for index, source in frame.iterrows():
+
+        def value(field: str, source_row: Any = source) -> Any:
+            return _mapped_value(source_row, mapping, field)
+
+        taxes = {
+            "igst": _to_decimal_optional(value("igst")),
+            "cgst": _to_decimal_optional(value("cgst")),
+            "sgst_utgst": _to_decimal_optional(value("sgst")),
+            "cess": _to_decimal_optional(value("cess")),
+        }
+        present_taxes = [amount for amount in taxes.values() if amount is not None]
+        total_tax = sum(present_taxes, Decimal("0")) if present_taxes else None
+        record = NormalizedGSTRecord(
+            tax_period=tax_period,
+            document_type=document_type,
+            document_number=str(value("invoice_number") or "").strip() or None,
+            document_date=_to_iso_date(value("invoice_date")),
+            supplier_name=str(value("supplier_name") or "").strip() or None,
+            supplier_gstin=str(value("supplier_gstin") or "").strip().upper() or None,
+            customer_name=str(value("customer_name") or "").strip() or None,
+            customer_gstin=str(value("customer_gstin") or "").strip().upper() or None,
+            place_of_supply=str(value("place_of_supply") or "").strip() or None,
+            hsn_sac=str(value("hsn_sac") or "").strip() or None,
+            taxable_value=_to_decimal_optional(value("taxable_value")),
+            gst_rate=_to_decimal_optional(value("gst_rate")),
+            total_document_value=_to_decimal_optional(value("invoice_total")),
+            transaction_type=str(value("transaction_type") or "").strip().lower() or None,
+            itc_status=str(value("itc_status") or "").strip().lower() or None,
+            rcm_flag=_to_bool_optional(value("rcm_flag")),
+            original_document_reference=(
+                str(value("original_document_reference") or "").strip() or None
+            ),
+            source_document_id=source_document_id,
+            source_row=int(index) + 2,
+            total_tax=total_tax,
+            **taxes,
+        )
+        records.append(record)
+
+    def money(field: str) -> Decimal:
+        return sum(
+            (getattr(record, field) or Decimal("0") for record in records),
+            Decimal("0"),
+        )
+
+    return ParsedNormalizedTable(
+        records=records,
+        summary={
+            "record_count": len(records),
+            "taxable_value": str(money("taxable_value")),
+            "total_tax": str(money("total_tax")),
+            "total_document_value": str(money("total_document_value")),
+            "rcm_count": sum(record.rcm_flag is True for record in records),
+            "itc_not_available_count": sum(
+                record.itc_status in {"not available", "ineligible", "blocked"}
+                for record in records
+            ),
+        },
+        column_mapping=mapping,
+    )
+
+
 def read_pdf_text(content: bytes) -> str:
     import fitz
 
@@ -136,6 +280,25 @@ def read_image_text(content: bytes, *, tesseract_cmd: str = "") -> str:
         pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
     image = Image.open(io.BytesIO(content))
     return pytesseract.image_to_string(image).strip()
+
+
+def read_scanned_pdf_text(content: bytes, *, tesseract_cmd: str = "") -> str:
+    """OCR PDF pages with the deployment-packaged Tesseract binary."""
+    import fitz
+
+    pages: list[str] = []
+    with fitz.open(stream=content, filetype="pdf") as document:
+        for page in document:
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            pages.append(read_image_text(pixmap.tobytes("png"), tesseract_cmd=tesseract_cmd))
+    return "\n".join(value for value in pages if value).strip()
+
+
+def read_docx_text(content: bytes) -> str:
+    from docx import Document
+
+    document = Document(io.BytesIO(content))
+    return "\n".join(paragraph.text for paragraph in document.paragraphs).strip()
 
 
 def _label(text: str, labels: list[str]) -> str | None:
@@ -164,9 +327,15 @@ def extract_invoice_from_text(text: str, document_type: str) -> dict[str, Any]:
     result = {
         "document_type": document_type,
         "supplier_name": _label(text, ["Supplier", "Vendor", "Seller"]),
-        "supplier_gstin": (_label(text, ["Supplier GSTIN", "Vendor GSTIN", "Seller GSTIN"]) or "").upper() or None,
+        "supplier_gstin": (
+            _label(text, ["Supplier GSTIN", "Vendor GSTIN", "Seller GSTIN"]) or ""
+        ).upper()
+        or None,
         "customer_name": _label(text, ["Customer", "Buyer", "Recipient"]),
-        "customer_gstin": (_label(text, ["Customer GSTIN", "Buyer GSTIN", "Recipient GSTIN"]) or "").upper() or None,
+        "customer_gstin": (
+            _label(text, ["Customer GSTIN", "Buyer GSTIN", "Recipient GSTIN"]) or ""
+        ).upper()
+        or None,
         "invoice_number": _label(text, ["Invoice Number", "Invoice No", "Bill No"]),
         "invoice_date": _invoice_date(text),
         "place_of_supply": _label(text, ["Place of Supply"]),
@@ -182,19 +351,35 @@ def extract_invoice_from_text(text: str, document_type: str) -> dict[str, Any]:
         "overall_confidence": 0.9,
         "warnings": [],
     }
-    present = sum(result.get(key) not in (None, "", 0.0) for key in (
-        "supplier_name", "supplier_gstin", "invoice_number", "invoice_date", "taxable_value", "invoice_total"
-    ))
+    present = sum(
+        result.get(key) not in (None, "", 0.0)
+        for key in (
+            "supplier_name",
+            "supplier_gstin",
+            "invoice_number",
+            "invoice_date",
+            "taxable_value",
+            "invoice_total",
+        )
+    )
     result["overall_confidence"] = round(0.45 + (present / 6) * 0.5, 2)
     return result
 
 
-def parse_document_content(filename: str, document_type: str, mime_type: str, content: bytes, *, tesseract_cmd: str = "") -> tuple[str, dict[str, Any]]:
+def parse_document_content(
+    filename: str, document_type: str, mime_type: str, content: bytes, *, tesseract_cmd: str = ""
+) -> tuple[str, dict[str, Any]]:
     extension = Path(filename).suffix.lower()
     if document_type in {"sales_register", "purchase_register", "gstr2b"}:
-        category = {"sales_register": "sales", "purchase_register": "purchase", "gstr2b": "gstr2b"}[document_type]
+        category = {"sales_register": "sales", "purchase_register": "purchase", "gstr2b": "gstr2b"}[
+            document_type
+        ]
         table = parse_tabular_document(content, extension, category=category)
-        return "", {"summary": table.summary, "rows": table.rows, "column_mapping": table.column_mapping}
+        return "", {
+            "summary": table.summary,
+            "rows": table.rows,
+            "column_mapping": table.column_mapping,
+        }
     if extension == ".pdf":
         text = read_pdf_text(content)
     elif extension in {".png", ".jpg", ".jpeg"}:

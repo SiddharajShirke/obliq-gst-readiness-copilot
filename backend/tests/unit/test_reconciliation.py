@@ -24,7 +24,7 @@ def test_reconciliation_finds_match_mismatch_and_unmatched_records() -> None:
     result = reconcile_records(purchase, gstr2b)
 
     counts = result.summary
-    assert counts["matched"] == 1
-    assert counts["amount_mismatch"] == 1
-    assert counts["purchase_only"] == 1
+    assert counts["exact_match"] == 1
+    assert counts["value_mismatch"] == 1
+    assert counts["books_only"] == 1
     assert counts["gstr2b_only"] == 1

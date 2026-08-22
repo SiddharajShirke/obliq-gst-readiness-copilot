@@ -2,7 +2,6 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 
-
 client = TestClient(app)
 
 
@@ -29,7 +28,7 @@ def test_demo_admin_can_list_seeded_clients() -> None:
     assert {"Raj Traders", "ABC Electronics", "Nova Services"}.issubset(names)
 
 
-def test_demo_admin_can_create_application_with_five_requirements() -> None:
+def test_demo_admin_can_create_application_with_six_requirements() -> None:
     response = client.post(
         "/api/v1/clients/20000000-0000-0000-0000-000000000001/applications",
         headers={"Authorization": "Bearer demo-admin-token"},
@@ -39,7 +38,7 @@ def test_demo_admin_can_create_application_with_five_requirements() -> None:
             "period_start": "2026-05-01",
             "period_end": "2026-05-31",
             "filing_frequency": "monthly",
-            "due_date": "2026-06-20"
+            "due_date": "2026-06-20",
         },
     )
     assert response.status_code == 201
@@ -49,7 +48,7 @@ def test_demo_admin_can_create_application_with_five_requirements() -> None:
         headers={"Authorization": "Bearer demo-admin-token"},
     )
     assert checklist.status_code == 200
-    assert len(checklist.json()) == 5
+    assert len(checklist.json()) == 6
 
 
 def test_seeded_quarterly_application_uses_quarter_dates() -> None:
@@ -70,5 +69,5 @@ def test_seeded_raj_walkthrough_starts_with_empty_checklist() -> None:
         headers={"Authorization": "Bearer demo-admin-token"},
     )
     assert response.status_code == 200, response.text
-    assert len(response.json()) == 5
+    assert len(response.json()) == 6
     assert all(row["status"] == "missing" for row in response.json())

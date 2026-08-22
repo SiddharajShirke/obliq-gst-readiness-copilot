@@ -19,6 +19,13 @@ class DocumentState(TypedDict, total=False):
     structured_data: dict[str, Any]
     invoice_rows: list[dict[str, Any]]
     findings: list[dict[str, Any]]
+    provider: str
+    model_name: str
+    task_type: str
+    fallback_reason: str | None
+    started_at: str
+    completed_at: str
+    duration_ms: int
     status: str
 
 

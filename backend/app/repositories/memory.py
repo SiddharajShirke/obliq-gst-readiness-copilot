@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import Settings
+from app.services.document_processing.taxonomy import CLIENT_REQUIREMENTS
 
 DEMO_FIRM_ID = "11111111-1111-1111-1111-111111111111"
 DEMO_ADMIN_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -32,9 +33,31 @@ CLIENT_IDS = {
 }
 
 _LEXICAL_STOP_WORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
-    "how", "in", "is", "it", "of", "on", "or", "should", "the", "to",
-    "what", "when", "where", "which", "with",
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "should",
+    "the",
+    "to",
+    "what",
+    "when",
+    "where",
+    "which",
+    "with",
 }
 
 
@@ -73,24 +96,70 @@ class MemoryStore:
         now = self._now()
         self.tables = {
             "profiles": [
-                {"id": DEMO_ADMIN_ID, "full_name": "Ananya Sharma", "email": self.settings.demo_admin_email, "created_at": now, "updated_at": now},
-                {"id": DEMO_PREPARER_ID, "full_name": "Aman Verma", "email": self.settings.demo_preparer_email, "created_at": now, "updated_at": now},
-                {"id": DEMO_REVIEWER_ID, "full_name": "Priya Nair", "email": self.settings.demo_reviewer_email, "created_at": now, "updated_at": now},
+                {
+                    "id": DEMO_ADMIN_ID,
+                    "full_name": "Ananya Sharma",
+                    "email": self.settings.demo_admin_email,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                {
+                    "id": DEMO_PREPARER_ID,
+                    "full_name": "Aman Verma",
+                    "email": self.settings.demo_preparer_email,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                {
+                    "id": DEMO_REVIEWER_ID,
+                    "full_name": "Priya Nair",
+                    "email": self.settings.demo_reviewer_email,
+                    "created_at": now,
+                    "updated_at": now,
+                },
             ],
-            "firms": [{"id": DEMO_FIRM_ID, "name": "Sharma & Associates", "slug": "sharma-associates", "created_at": now, "updated_at": now}],
+            "firms": [
+                {
+                    "id": DEMO_FIRM_ID,
+                    "name": "Sharma & Associates",
+                    "slug": "sharma-associates",
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            ],
             "firm_members": [
-                {"id": str(uuid.uuid4()), "firm_id": DEMO_FIRM_ID, "user_id": DEMO_ADMIN_ID, "role": "firm_admin", "created_at": now},
-                {"id": str(uuid.uuid4()), "firm_id": DEMO_FIRM_ID, "user_id": DEMO_PREPARER_ID, "role": "gst_preparer", "created_at": now},
-                {"id": str(uuid.uuid4()), "firm_id": DEMO_FIRM_ID, "user_id": DEMO_REVIEWER_ID, "role": "reviewer", "created_at": now},
+                {
+                    "id": str(uuid.uuid4()),
+                    "firm_id": DEMO_FIRM_ID,
+                    "user_id": DEMO_ADMIN_ID,
+                    "role": "firm_admin",
+                    "created_at": now,
+                },
+                {
+                    "id": str(uuid.uuid4()),
+                    "firm_id": DEMO_FIRM_ID,
+                    "user_id": DEMO_PREPARER_ID,
+                    "role": "gst_preparer",
+                    "created_at": now,
+                },
+                {
+                    "id": str(uuid.uuid4()),
+                    "firm_id": DEMO_FIRM_ID,
+                    "user_id": DEMO_REVIEWER_ID,
+                    "role": "reviewer",
+                    "created_at": now,
+                },
             ],
             "clients": [],
             "applications": [],
             "document_requirements": [],
             "upload_links": [],
             "documents": [],
+            "document_submission_batches": [],
             "document_extractions": [],
             "invoice_records": [],
             "validation_findings": [],
+            "validation_correction_proposals": [],
             "reconciliation_runs": [],
             "reconciliation_items": [],
             "reminders": [],
@@ -104,58 +173,153 @@ class MemoryStore:
             "workflow_runs": [],
         }
         scenarios = [
-            (CLIENT_IDS["raj"], "Raj Traders", "Raj Traders", "27RAJTR1234A1Z5", "Maharashtra", "Retail", "monthly", "Raj Malhotra", "+919810000001", "purchase register missing"),
-            (CLIENT_IDS["abc"], "ABC Electronics", "ABC Electronics Private Limited", "29ABCDE1234F1Z3", "Karnataka", "Electronics", "monthly", "Kavya Rao", "+919810000002", "duplicate and wrong-period invoice"),
-            (CLIENT_IDS["nova"], "Nova Services", "Nova Professional Services LLP", "07NOVAS1234L1Z4", "Delhi", "Professional services", "monthly", "Rohan Mehta", "+919810000003", "ready for CA review"),
-            (CLIENT_IDS["city"], "City Retail", "City Retail Private Limited", "24CITYR1234P1Z2", "Gujarat", "Retail", "quarterly", "Neha Shah", "+919810000004", "GSTR-2B mismatch"),
-            (CLIENT_IDS["mehta"], "Mehta Consulting", "Mehta Consulting", "27MEHTA1234C1Z6", "Maharashtra", "Consulting", "monthly", "Arjun Mehta", "+919810000005", "low-confidence scan"),
+            (
+                CLIENT_IDS["raj"],
+                "Raj Traders",
+                "Raj Traders",
+                "27RAJTR1234A1Z5",
+                "Maharashtra",
+                "Retail",
+                "monthly",
+                "Raj Malhotra",
+                "+919810000001",
+                "purchase register missing",
+            ),
+            (
+                CLIENT_IDS["abc"],
+                "ABC Electronics",
+                "ABC Electronics Private Limited",
+                "29ABCDE1234F1Z3",
+                "Karnataka",
+                "Electronics",
+                "monthly",
+                "Kavya Rao",
+                "+919810000002",
+                "duplicate and wrong-period invoice",
+            ),
+            (
+                CLIENT_IDS["nova"],
+                "Nova Services",
+                "Nova Professional Services LLP",
+                "07NOVAS1234L1Z4",
+                "Delhi",
+                "Professional services",
+                "monthly",
+                "Rohan Mehta",
+                "+919810000003",
+                "ready for CA review",
+            ),
+            (
+                CLIENT_IDS["city"],
+                "City Retail",
+                "City Retail Private Limited",
+                "24CITYR1234P1Z2",
+                "Gujarat",
+                "Retail",
+                "quarterly",
+                "Neha Shah",
+                "+919810000004",
+                "GSTR-2B mismatch",
+            ),
+            (
+                CLIENT_IDS["mehta"],
+                "Mehta Consulting",
+                "Mehta Consulting",
+                "27MEHTA1234C1Z6",
+                "Maharashtra",
+                "Consulting",
+                "monthly",
+                "Arjun Mehta",
+                "+919810000005",
+                "low-confidence scan",
+            ),
         ]
-        for client_id, business, legal, gstin, state, kind, frequency, contact, phone, scenario in scenarios:
-            self.tables["clients"].append({
-                "id": client_id,
-                "firm_id": DEMO_FIRM_ID,
-                "business_name": business,
-                "legal_name": legal,
-                "gstin": gstin,
-                "state": state,
-                "business_type": kind,
-                "filing_frequency": frequency,
-                "contact_name": contact,
-                "whatsapp_phone": phone,
-                "preferred_language": "English",
-                "whatsapp_consent": True,
-                "assigned_preparer_id": DEMO_PREPARER_ID,
-                "reviewer_id": DEMO_REVIEWER_ID,
-                "demo_scenario": scenario,
-                "created_at": now,
-                "updated_at": now,
-            })
+        for (
+            client_id,
+            business,
+            legal,
+            gstin,
+            state,
+            kind,
+            frequency,
+            contact,
+            phone,
+            scenario,
+        ) in scenarios:
+            self.tables["clients"].append(
+                {
+                    "id": client_id,
+                    "firm_id": DEMO_FIRM_ID,
+                    "business_name": business,
+                    "legal_name": legal,
+                    "gstin": gstin,
+                    "state": state,
+                    "business_type": kind,
+                    "filing_frequency": frequency,
+                    "contact_name": contact,
+                    "whatsapp_phone": phone,
+                    "preferred_language": "English",
+                    "whatsapp_consent": True,
+                    "assigned_preparer_id": DEMO_PREPARER_ID,
+                    "reviewer_id": DEMO_REVIEWER_ID,
+                    "demo_scenario": scenario,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
 
         seeded_apps = [
-            ("30000000-0000-0000-0000-000000000001", CLIENT_IDS["raj"], "April 2026", "partially_received"),
-            ("30000000-0000-0000-0000-000000000002", CLIENT_IDS["abc"], "April 2026", "validation_review"),
-            ("30000000-0000-0000-0000-000000000003", CLIENT_IDS["nova"], "April 2026", "ready_for_ca_review"),
-            ("30000000-0000-0000-0000-000000000004", CLIENT_IDS["city"], "Q1 2026-27", "reconciliation_review"),
-            ("30000000-0000-0000-0000-000000000005", CLIENT_IDS["mehta"], "April 2026", "extraction_review"),
+            (
+                "30000000-0000-0000-0000-000000000001",
+                CLIENT_IDS["raj"],
+                "April 2026",
+                "partially_received",
+            ),
+            (
+                "30000000-0000-0000-0000-000000000002",
+                CLIENT_IDS["abc"],
+                "April 2026",
+                "validation_review",
+            ),
+            (
+                "30000000-0000-0000-0000-000000000003",
+                CLIENT_IDS["nova"],
+                "April 2026",
+                "ready_for_ca_review",
+            ),
+            (
+                "30000000-0000-0000-0000-000000000004",
+                CLIENT_IDS["city"],
+                "Q1 2026-27",
+                "reconciliation_review",
+            ),
+            (
+                "30000000-0000-0000-0000-000000000005",
+                CLIENT_IDS["mehta"],
+                "April 2026",
+                "extraction_review",
+            ),
         ]
         for app_id, client_id, label, status in seeded_apps:
-            self.tables["applications"].append({
-                "id": app_id,
-                "firm_id": DEMO_FIRM_ID,
-                "client_id": client_id,
-                "application_type": "gst_readiness",
-                "financial_year": "2026-27",
-                "period_label": label,
-                "period_start": "2026-04-01",
-                "period_end": "2026-06-30" if "Q1" in label else "2026-04-30",
-                "filing_frequency": "quarterly" if "Q1" in label else "monthly",
-                "due_date": "2026-07-22" if "Q1" in label else "2026-05-20",
-                "status": status,
-                "assigned_preparer_id": DEMO_PREPARER_ID,
-                "reviewer_id": DEMO_REVIEWER_ID,
-                "created_at": now,
-                "updated_at": now,
-            })
+            self.tables["applications"].append(
+                {
+                    "id": app_id,
+                    "firm_id": DEMO_FIRM_ID,
+                    "client_id": client_id,
+                    "application_type": "gst_readiness",
+                    "financial_year": "2026-27",
+                    "period_label": label,
+                    "period_start": "2026-04-01",
+                    "period_end": "2026-06-30" if "Q1" in label else "2026-04-30",
+                    "filing_frequency": "quarterly" if "Q1" in label else "monthly",
+                    "due_date": "2026-07-22" if "Q1" in label else "2026-05-20",
+                    "status": status,
+                    "assigned_preparer_id": DEMO_PREPARER_ID,
+                    "reviewer_id": DEMO_REVIEWER_ID,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
             self._add_requirements(app_id, all_missing=client_id == CLIENT_IDS["raj"])
 
         self._seed_knowledge(now)
@@ -193,52 +357,68 @@ class MemoryStore:
         ]
         self.tables["knowledge_sources"].extend(sources)
         contents = [
-            (sources[0], "GSTR-2B is an auto-drafted statement used as a reference during input tax credit review. A mismatch means an invoice or amount differs between the purchase register and the uploaded GSTR-2B data. OBLIQ must present these as possible differences requiring CA review, not as automatic approval or rejection of ITC."),
-            (sources[1], "When invoice totals do not match the taxable value plus CGST, SGST, IGST and cess, the preparer should compare the original document with extracted fields. Low-confidence data, duplicate invoices, wrong-period dates and missing GSTIN values must remain open until a reviewer resolves or accepts the finding."),
-            (sources[1], "Client reminders should identify only the documents still missing, include the secure upload link, and remain short and professional. The CA must approve or edit every outbound reminder before the WhatsApp provider sends it."),
+            (
+                sources[0],
+                "GSTR-2B is an auto-drafted statement used as a reference during input tax "
+                "credit review. A mismatch means an invoice or amount differs between the "
+                "purchase register and the uploaded GSTR-2B data. OBLIQ must present these "
+                "as possible differences requiring CA review, not as automatic approval or "
+                "rejection of ITC.",
+            ),
+            (
+                sources[1],
+                "When invoice totals do not match the taxable value plus CGST, SGST, IGST "
+                "and cess, the preparer should compare the original document with extracted "
+                "fields. Low-confidence data, duplicate invoices, wrong-period dates and "
+                "missing GSTIN values must remain open until a reviewer resolves or accepts "
+                "the finding.",
+            ),
+            (
+                sources[1],
+                "Client reminders should identify only the documents still missing, include "
+                "the secure upload link, and remain short and professional. The CA must "
+                "approve or edit every outbound reminder before the WhatsApp provider sends it.",
+            ),
         ]
         embedder = DeterministicEmbeddingProvider(self.settings.embedding_dimension)
         vectors = embedder.embed_texts([content for _, content in contents])
         for index, ((source, content), embedding) in enumerate(zip(contents, vectors, strict=True)):
-            self.tables["knowledge_chunks"].append({
-                "id": f"91000000-0000-0000-0000-{index + 1:012d}",
-                "source_id": source["id"],
-                "firm_id": source["firm_id"],
-                "chunk_index": index,
-                "content": content,
-                "metadata": {
-                    "title": source["title"],
-                    "section": "Prototype guidance",
-                    "page": 1,
-                    "source_type": source["source_type"],
-                    "source_url": source["source_url"],
-                    "document_version": "demo-v1",
-                },
-                "embedding": embedding,
-                "created_at": now,
-            })
+            self.tables["knowledge_chunks"].append(
+                {
+                    "id": f"91000000-0000-0000-0000-{index + 1:012d}",
+                    "source_id": source["id"],
+                    "firm_id": source["firm_id"],
+                    "chunk_index": index,
+                    "content": content,
+                    "metadata": {
+                        "title": source["title"],
+                        "section": "Prototype guidance",
+                        "page": 1,
+                        "source_type": source["source_type"],
+                        "source_url": source["source_url"],
+                        "document_version": "demo-v1",
+                    },
+                    "embedding": embedding,
+                    "created_at": now,
+                }
+            )
 
     def _add_requirements(self, application_id: str, *, all_missing: bool = False) -> None:
-        labels = {
-            "sales_register": "Sales Register",
-            "purchase_register": "Purchase Register",
-            "sales_invoice": "Sales Invoices",
-            "purchase_invoice": "Purchase Invoices",
-            "gstr2b": "GSTR-2B",
-        }
         now = self._now()
-        for requirement_type, label in labels.items():
+        for requirement_type, label in CLIENT_REQUIREMENTS.items():
             status = "missing" if all_missing else "received"
-            self.tables["document_requirements"].append({
-                "id": str(uuid.uuid4()),
-                "application_id": application_id,
-                "requirement_type": requirement_type,
-                "label": label,
-                "required": True,
-                "status": status,
-                "created_at": now,
-                "updated_at": now,
-            })
+            self.tables["document_requirements"].append(
+                {
+                    "id": str(uuid.uuid4()),
+                    "application_id": application_id,
+                    "requirement_type": requirement_type,
+                    "label": label,
+                    "required": True,
+                    "status": status,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
 
     async def reset_demo(self) -> dict[str, int | str]:
         """Restore deterministic seeded state and remove generated runtime files."""
@@ -253,7 +433,15 @@ class MemoryStore:
                 "applications": len(self.tables["applications"]),
             }
 
-    async def list_rows(self, table: str, filters: dict[str, Any] | None = None, *, order: str | None = None, desc: bool = False, limit: int | None = None) -> list[dict[str, Any]]:
+    async def list_rows(
+        self,
+        table: str,
+        filters: dict[str, Any] | None = None,
+        *,
+        order: str | None = None,
+        desc: bool = False,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
         rows = [deepcopy(row) for row in self.tables.get(table, [])]
         for key, value in (filters or {}).items():
             if isinstance(value, (list, tuple, set)):
@@ -276,12 +464,21 @@ class MemoryStore:
             row = deepcopy(data)
             row.setdefault("id", str(uuid.uuid4()))
             row.setdefault("created_at", now)
-            if table not in {"audit_events", "firm_members", "upload_links", "validation_findings", "reconciliation_items", "knowledge_chunks"}:
+            if table not in {
+                "audit_events",
+                "firm_members",
+                "upload_links",
+                "validation_findings",
+                "reconciliation_items",
+                "knowledge_chunks",
+            }:
                 row.setdefault("updated_at", now)
             self.tables.setdefault(table, []).append(row)
             return deepcopy(row)
 
-    async def update_row(self, table: str, row_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    async def update_row(
+        self, table: str, row_id: str, data: dict[str, Any]
+    ) -> dict[str, Any] | None:
         async with self.lock:
             for row in self.tables.get(table, []):
                 if str(row.get("id")) == str(row_id):
@@ -298,7 +495,9 @@ class MemoryStore:
             self.tables[table] = [row for row in rows if str(row.get("id")) != str(row_id)]
             return len(self.tables[table]) < before
 
-    async def upsert_row(self, table: str, data: dict[str, Any], *, on_conflict: str | None = None) -> dict[str, Any]:
+    async def upsert_row(
+        self, table: str, data: dict[str, Any], *, on_conflict: str | None = None
+    ) -> dict[str, Any]:
         keys = [item.strip() for item in (on_conflict or "id").split(",")]
         for row in self.tables.get(table, []):
             if all(str(row.get(key)) == str(data.get(key)) for key in keys):
@@ -306,6 +505,55 @@ class MemoryStore:
         return await self.insert_row(table, data)
 
     async def rpc(self, function_name: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        if function_name == "submit_document_batch":
+            async with self.lock:
+                link = next(
+                    (
+                        row for row in self.tables["upload_links"]
+                        if str(row["id"]) == str(params["p_upload_link_id"])
+                        and not row.get("revoked_at")
+                    ),
+                    None,
+                )
+                if not link:
+                    return []
+                eligible = [
+                    row for row in self.tables["documents"]
+                    if str(row.get("upload_link_id") or "") == str(link["id"])
+                    and str(row.get("application_id")) == str(link["application_id"])
+                    and row.get("processing_status") == "awaiting_submission"
+                    and not row.get("submission_batch_id")
+                    and row.get("document_type") not in {"developer_ground_truth", "unknown"}
+                ]
+                if not eligible:
+                    return []
+                batch = {
+                    "id": params["p_batch_id"],
+                    "firm_id": link["firm_id"],
+                    "client_id": link["client_id"],
+                    "application_id": link["application_id"],
+                    "demo_session_id": link.get("demo_session_id"),
+                    "upload_link_id": link["id"],
+                    "status": "submitted",
+                    "document_count": len(eligible),
+                    "completed_count": 0,
+                    "failed_count": 0,
+                    "submitted_at": params["p_now"],
+                    "completed_at": None,
+                    "created_at": params["p_now"],
+                    "updated_at": params["p_now"],
+                }
+                self.tables["document_submission_batches"].append(batch)
+                for document in eligible:
+                    document.update(
+                        {
+                            "submission_batch_id": batch["id"],
+                            "submitted_at": params["p_now"],
+                            "processing_status": "awaiting_processing",
+                            "updated_at": params["p_now"],
+                        }
+                    )
+                return [deepcopy(batch)]
         if function_name == "create_whatsapp_demo_session":
             async with self.lock:
                 base = next(
@@ -331,9 +579,7 @@ class MemoryStore:
                     "session_application_id": application_id,
                     "created_by_user_id": params["p_created_by_user_id"],
                     "start_token_hash": params["p_start_token_hash"],
-                    "dashboard_access_token_hash": params[
-                        "p_dashboard_access_token_hash"
-                    ],
+                    "dashboard_access_token_hash": params["p_dashboard_access_token_hash"],
                     "judge_phone_hash": None,
                     "judge_phone_encrypted": None,
                     "judge_phone_last_four": None,
@@ -394,9 +640,7 @@ class MemoryStore:
                 ]
         if function_name == "bind_whatsapp_demo_session":
             async with self.lock:
-                now = datetime.fromisoformat(
-                    str(params["p_now"]).replace("Z", "+00:00")
-                )
+                now = datetime.fromisoformat(str(params["p_now"]).replace("Z", "+00:00"))
                 session = next(
                     (
                         row
@@ -407,9 +651,7 @@ class MemoryStore:
                             str(row["token_expires_at"]).replace("Z", "+00:00")
                         )
                         > now
-                        and datetime.fromisoformat(
-                            str(row["expires_at"]).replace("Z", "+00:00")
-                        )
+                        and datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00"))
                         > now
                     ),
                     None,
@@ -475,8 +717,7 @@ class MemoryStore:
                             row
                             for row in self.tables["whatsapp_demo_sessions"]
                             if row["id"] == params["p_demo_session_id"]
-                            and row.get("session_application_id")
-                            == params["p_application_id"]
+                            and row.get("session_application_id") == params["p_application_id"]
                             and row.get("status") == "active"
                         ),
                         None,
@@ -508,7 +749,10 @@ class MemoryStore:
                     "file_size": params["p_file_size"],
                     "sha256": params["p_sha256"],
                     "document_type": None,
-                    "processing_status": "awaiting_processing",
+                    "processing_status": "awaiting_submission",
+                    "upload_link_id": None,
+                    "submission_batch_id": None,
+                    "submitted_at": None,
                     "uploaded_by_user_id": None,
                     "uploaded_from_phone": None,
                     "upload_completed_at": now,
@@ -557,7 +801,15 @@ class MemoryStore:
                 en = math.sqrt(sum(float(a) ** 2 for a in embedding)) or 1
                 similarity = dot / (qn * en)
                 if similarity >= minimum:
-                    results.append({"chunk_id": row["id"], "source_id": row["source_id"], "content": row["content"], "metadata": row.get("metadata", {}), "similarity": similarity})
+                    results.append(
+                        {
+                            "chunk_id": row["id"],
+                            "source_id": row["source_id"],
+                            "content": row["content"],
+                            "metadata": row.get("metadata", {}),
+                            "similarity": similarity,
+                        }
+                    )
             return sorted(results, key=lambda row: row["similarity"], reverse=True)[:count]
         if function_name == "search_knowledge_chunks_lexical":
             terms = _lexical_terms(str(params.get("query_text", "")))
@@ -575,7 +827,15 @@ class MemoryStore:
                 words = _lexical_terms(searchable)
                 rank = len(terms & words) / max(len(terms), 1)
                 if rank:
-                    results.append({"chunk_id": row["id"], "source_id": row["source_id"], "content": row["content"], "metadata": metadata, "rank": rank})
+                    results.append(
+                        {
+                            "chunk_id": row["id"],
+                            "source_id": row["source_id"],
+                            "content": row["content"],
+                            "metadata": metadata,
+                            "rank": rank,
+                        }
+                    )
             return sorted(results, key=lambda row: row["rank"], reverse=True)[:count]
         return []
 
@@ -606,8 +866,16 @@ class MemoryStore:
     async def get_user_from_token(self, token: str) -> dict[str, Any] | None:
         mapping = {
             "demo-admin-token": (DEMO_ADMIN_ID, "firm_admin", self.settings.demo_admin_email),
-            "demo-preparer-token": (DEMO_PREPARER_ID, "gst_preparer", self.settings.demo_preparer_email),
-            "demo-reviewer-token": (DEMO_REVIEWER_ID, "reviewer", self.settings.demo_reviewer_email),
+            "demo-preparer-token": (
+                DEMO_PREPARER_ID,
+                "gst_preparer",
+                self.settings.demo_preparer_email,
+            ),
+            "demo-reviewer-token": (
+                DEMO_REVIEWER_ID,
+                "reviewer",
+                self.settings.demo_reviewer_email,
+            ),
         }
         match = mapping.get(token)
         if not match:

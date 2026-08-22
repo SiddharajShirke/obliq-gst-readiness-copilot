@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     llm_fallback_provider: str = "openai"
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
+    groq_heavy_model: str = ""
+    nvidia_api_key: str = ""
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    nvidia_small_model: str = ""
+    nvidia_vision_model: str = ""
     gemini_api_key: str = ""
     gemini_text_model: str = "gemini-2.5-flash"
     gemini_vision_model: str = "gemini-2.5-flash"
@@ -66,6 +71,8 @@ class Settings(BaseSettings):
     ocr_enabled: bool = True
     tesseract_cmd: str = ""
     max_upload_mb: int = 20
+    bulk_upload_max_files: int = 20
+    bulk_upload_max_total_mb: int = 100
     allowed_upload_extensions: str = "pdf,png,jpg,jpeg,csv,xlsx,docx,json"
     upload_link_ttl_hours: int = 72
     upload_token_pepper: str = ""
@@ -123,12 +130,30 @@ class Settings(BaseSettings):
         }
         missing = [name for name, value in required.items() if not value]
         if missing:
-            raise ValueError(
-                "Vonage WhatsApp configuration is incomplete: " + ", ".join(missing)
-            )
+            raise ValueError("Vonage WhatsApp configuration is incomplete: " + ", ".join(missing))
         if not self.upload_token_pepper:
             raise ValueError("Secure upload configuration is incomplete: UPLOAD_TOKEN_PEPPER")
         return self
+
+    @model_validator(mode="after")
+    def validate_ai_runtime(self) -> Settings:
+        if self.ai_mode != "live":
+            return self
+        required = {
+            "GROQ_API_KEY": self.groq_api_key,
+            "GROQ_HEAVY_MODEL": self.groq_heavy_model or self.groq_model,
+            "NVIDIA_API_KEY": self.nvidia_api_key,
+            "NVIDIA_BASE_URL": self.nvidia_base_url,
+            "NVIDIA_SMALL_MODEL": self.nvidia_small_model,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise ValueError("Live Phase 3 AI configuration is incomplete: " + ", ".join(missing))
+        return self
+
+    @property
+    def effective_groq_model(self) -> str:
+        return self.groq_heavy_model or self.groq_model
 
     @property
     def allowed_extensions(self) -> set[str]:

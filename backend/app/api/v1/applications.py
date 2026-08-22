@@ -9,6 +9,7 @@ from app.schemas.applications import ApplicationCreate, ApplicationUpdate
 from app.schemas.auth import UserContext
 from app.services.audit import record_audit
 from app.services.document_collection import get_document_collection_status
+from app.services.document_processing.taxonomy import CLIENT_REQUIREMENTS
 from app.services.whatsapp.sessions import verify_dashboard_access
 
 router = APIRouter(tags=["applications"])
@@ -20,12 +21,8 @@ async def document_collection_status(
     user: Annotated[UserContext, Depends(current_user)],
     store: Annotated[DataStore, Depends(get_store)],
     settings: Annotated[Settings, Depends(get_settings)],
-    session_id: Annotated[
-        str | None, Header(alias="X-OBLIQ-Demo-Session-Id")
-    ] = None,
-    access_token: Annotated[
-        str | None, Header(alias="X-OBLIQ-Demo-Access-Token")
-    ] = None,
+    session_id: Annotated[str | None, Header(alias="X-OBLIQ-Demo-Session-Id")] = None,
+    access_token: Annotated[str | None, Header(alias="X-OBLIQ-Demo-Access-Token")] = None,
 ) -> dict:
     await require_firm_row(store, "applications", application_id, user.firm_id)
     effective_application_id = application_id
@@ -45,13 +42,8 @@ async def document_collection_status(
         "effective_application_id": effective_application_id,
     }
 
-REQUIREMENTS = {
-    "sales_register": "Sales Register",
-    "purchase_register": "Purchase Register",
-    "sales_invoice": "Sales Invoices",
-    "purchase_invoice": "Purchase Invoices",
-    "gstr2b": "GSTR-2B",
-}
+
+REQUIREMENTS = CLIENT_REQUIREMENTS
 
 
 @router.get("/applications")
@@ -188,13 +180,11 @@ async def dashboard_summary(
         "active_applications": sum(app.get("status") != "completed" for app in applications),
         "missing_documents": missing,
         "needs_review": sum(
-            app.get("status")
-            in {"extraction_review", "validation_review", "reconciliation_review"}
+            app.get("status") in {"extraction_review", "validation_review", "reconciliation_review"}
             for app in applications
         ),
         "ready_for_filing": sum(
-            app.get("status")
-            in {"ready_for_ca_review", "approved", "ready_for_filing"}
+            app.get("status") in {"ready_for_ca_review", "approved", "ready_for_filing"}
             for app in applications
         ),
     }

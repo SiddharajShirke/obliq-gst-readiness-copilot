@@ -43,7 +43,8 @@ async def test_welcome_and_status_messages_read_the_cloned_checklist() -> None:
     assert "CA will send the secure upload link after review" in welcome
     assert status.action == "status"
     assert "Pending document categories" in status.text
-    assert "GSTR-2B" in status.text
+    assert "GST Special Transactions" in status.text
+    assert "GSTR-2B" not in status.text
 
 
 @pytest.mark.asyncio

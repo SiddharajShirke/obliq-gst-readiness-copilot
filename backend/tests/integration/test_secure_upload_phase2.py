@@ -73,9 +73,7 @@ def _pdf() -> bytes:
 
 def test_demo_upload_is_private_awaiting_processing_and_isolated(phase2_client) -> None:
     client, store, settings = phase2_client
-    created, session, application, link = asyncio.run(
-        _active_demo_link(store, settings)
-    )
+    created, session, application, link = asyncio.run(_active_demo_link(store, settings))
     other = asyncio.run(create_demo_session(store, settings, APP_ID, DEMO_ADMIN_ID))
     clone_requirements = asyncio.run(
         store.list_rows(
@@ -96,6 +94,8 @@ def test_demo_upload_is_private_awaiting_processing_and_isolated(phase2_client) 
         "checklist",
         "allowed_extensions",
         "maximum_size_mb",
+        "ready_to_submit_count",
+        "latest_submission_batch",
     }
     assert set(public_context.json()["client"]) == {"business_name"}
     assert "token" not in public_context.text.lower()
@@ -118,7 +118,7 @@ def test_demo_upload_is_private_awaiting_processing_and_isolated(phase2_client) 
     assert public_result["upload_status"] == "uploaded"
     document = asyncio.run(store.get_row("documents", public_result["id"]))
     assert document is not None
-    assert document["processing_status"] == "awaiting_processing"
+    assert document["processing_status"] == "awaiting_submission"
     assert document["source"] == "secure_link"
     assert document["demo_session_id"] == created.session_id
     assert document["application_id"] == created.session_application_id
@@ -129,14 +129,15 @@ def test_demo_upload_is_private_awaiting_processing_and_isolated(phase2_client) 
         f"{session['firm_id']}/{session['base_client_id']}/{created.session_id}/"
         f"{created.session_application_id}/{document['id']}/Sales_Register_.pdf"
     )
-    assert document["document_type"] is None
+    assert document["document_type"] == "sales_register"
     assert document["upload_completed_at"] is not None
-    assert asyncio.run(
-        store.download_file(document["storage_bucket"], document["storage_path"])
-    ) == _pdf()
-    assert asyncio.run(
-        store.list_rows("document_extractions", {"document_id": document["id"]})
-    ) == []
+    assert (
+        asyncio.run(store.download_file(document["storage_bucket"], document["storage_path"]))
+        == _pdf()
+    )
+    assert (
+        asyncio.run(store.list_rows("document_extractions", {"document_id": document["id"]})) == []
+    )
     status = client.get(
         f"/api/v1/whatsapp-demo-sessions/{created.session_id}",
         headers={
@@ -145,11 +146,9 @@ def test_demo_upload_is_private_awaiting_processing_and_isolated(phase2_client) 
         },
     )
     assert status.status_code == 200, status.text
-    sales_status = next(
-        row for row in status.json()["checklist"] if row["id"] == requirement["id"]
-    )
+    sales_status = next(row for row in status.json()["checklist"] if row["id"] == requirement["id"])
     assert sales_status["upload_status"] == "uploaded"
-    assert sales_status["processing_status"] == "awaiting_processing"
+    assert sales_status["processing_status"] == "awaiting_submission"
 
     updated = asyncio.run(store.get_row("document_requirements", requirement["id"]))
     assert updated["status"] == "received"
@@ -173,9 +172,7 @@ def test_demo_upload_is_private_awaiting_processing_and_isolated(phase2_client) 
     assert base["status"] == "missing"
     assert other_requirement["status"] == "missing"
     assert application["id"] != APP_ID
-    actions = {
-        row["action"] for row in asyncio.run(store.list_rows("audit_events"))
-    }
+    actions = {row["action"] for row in asyncio.run(store.list_rows("audit_events"))}
     assert "checklist_requirement_received" in actions
 
 
@@ -222,17 +219,17 @@ def test_duplicate_and_cross_session_requirement_do_not_complete_checklist(
     assert duplicate.status_code == 409
     assert duplicate.json()["detail"] == "This file was already uploaded"
     assert crossed.status_code == 400
-    actions = {
-        row["action"] for row in asyncio.run(store.list_rows("audit_events"))
-    }
+    actions = {row["action"] for row in asyncio.run(store.list_rows("audit_events"))}
     assert "upload_duplicate_rejected" in actions
     assert "upload_failed" in actions
-    assert asyncio.run(store.get_row("document_requirements", first_purchase["id"]))[
-        "status"
-    ] == "missing"
-    assert asyncio.run(store.get_row("document_requirements", second_requirement["id"]))[
-        "status"
-    ] == "missing"
+    assert (
+        asyncio.run(store.get_row("document_requirements", first_purchase["id"]))["status"]
+        == "missing"
+    )
+    assert (
+        asyncio.run(store.get_row("document_requirements", second_requirement["id"]))["status"]
+        == "missing"
+    )
 
 
 def test_expired_revoked_and_invalid_files_change_no_document_state(
@@ -258,9 +255,10 @@ def test_expired_revoked_and_invalid_files_change_no_document_state(
         row["action"] for row in asyncio.run(store.list_rows("audit_events"))
     }
     assert asyncio.run(store.list_rows("documents")) == []
-    assert asyncio.run(store.get_row("document_requirements", requirement["id"]))[
-        "status"
-    ] == "missing"
+    assert (
+        asyncio.run(store.get_row("document_requirements", requirement["id"]))["status"]
+        == "missing"
+    )
 
     links = asyncio.run(store.list_rows("upload_links", {"token_hash": link.raw_token}))
     assert links == []
@@ -349,6 +347,4 @@ def test_demo_cleanup_removes_private_upload_and_metadata(phase2_client) -> None
     assert result["deleted"] == 1
     assert asyncio.run(store.get_row("documents", document["id"])) is None
     with pytest.raises(FileNotFoundError):
-        asyncio.run(
-            store.download_file(document["storage_bucket"], document["storage_path"])
-        )
+        asyncio.run(store.download_file(document["storage_bucket"], document["storage_path"]))

@@ -12,14 +12,10 @@ DEMO_FILES = ROOT / "demo_data" / "documents"
 
 def _upload(application_id: str, client_id: str, requirement_type: str, filename: str) -> dict:
     del client_id
-    link = client.post(
-        f"/api/v1/applications/{application_id}/upload-link", headers=AUTH
-    )
+    link = client.post(f"/api/v1/applications/{application_id}/upload-link", headers=AUTH)
     assert link.status_code == 201, link.text
     token = link.json()["token"]
-    checklist = client.get(
-        f"/api/v1/applications/{application_id}/checklist", headers=AUTH
-    ).json()
+    checklist = client.get(f"/api/v1/applications/{application_id}/checklist", headers=AUTH).json()
     requirement_id = next(
         row["id"] for row in checklist if row["requirement_type"] == requirement_type
     )
@@ -38,9 +34,9 @@ def _upload(application_id: str, client_id: str, requirement_type: str, filename
         )
     assert response.status_code == 201, response.text
     document = response.json()
-    assert document["processing_status"] == "awaiting_processing"
-    processed = client.post(f"/api/v1/documents/{document['id']}/process", headers=AUTH)
-    assert processed.status_code == 200, processed.text
+    assert document["processing_status"] == "awaiting_submission"
+    submitted = client.post(f"/api/v1/public/upload/{token}/submit")
+    assert submitted.status_code == 202, submitted.text
     return document
 
 
@@ -91,17 +87,32 @@ def test_complete_gst_readiness_walkthrough() -> None:
     first_document = _upload(
         application_id, client_id, "sales_register", "Sales_Register_April.csv"
     )
-    _upload(application_id, client_id, "sales_invoice", "Sales_Invoice_RT-501.pdf")
-    _upload(application_id, client_id, "purchase_invoice", "Purchase_Invoice_SD-1042.pdf")
-    _upload(application_id, client_id, "gstr2b", "GSTR2B_April.json")
+    _upload(application_id, client_id, "sales_invoices", "Sales_Invoice_RT-501.pdf")
+    _upload(
+        application_id,
+        client_id,
+        "purchase_expense_invoices",
+        "Purchase_Invoice_SD-1042.pdf",
+    )
+    _upload(
+        application_id,
+        client_id,
+        "credit_debit_notes",
+        "Purchase_Invoice_Duplicate_A.pdf",
+    )
+    _upload(
+        application_id,
+        client_id,
+        "gst_special_transactions",
+        "Purchase_Invoice_Wrong_Period.pdf",
+    )
 
-    checklist = client.get(
-        f"/api/v1/applications/{application_id}/checklist", headers=AUTH
-    ).json()
-    assert sum(row["status"] != "missing" for row in checklist) == 4
-    assert next(row for row in checklist if row["requirement_type"] == "purchase_register")[
-        "status"
-    ] == "missing"
+    checklist = client.get(f"/api/v1/applications/{application_id}/checklist", headers=AUTH).json()
+    assert sum(row["status"] != "missing" for row in checklist) == 5
+    assert (
+        next(row for row in checklist if row["requirement_type"] == "purchase_register")["status"]
+        == "missing"
+    )
 
     reminder_draft = client.post(
         f"/api/v1/applications/{application_id}/reminders/draft", headers=AUTH
@@ -112,14 +123,19 @@ def test_complete_gst_readiness_walkthrough() -> None:
     assert missing_reminder["requires_connection"] is True
 
     _upload(application_id, client_id, "purchase_register", "Purchase_Register_April.xlsx")
-    checklist = client.get(
-        f"/api/v1/applications/{application_id}/checklist", headers=AUTH
-    ).json()
+    checklist = client.get(f"/api/v1/applications/{application_id}/checklist", headers=AUTH).json()
     assert all(row["status"] != "missing" for row in checklist)
 
-    extraction = client.get(
-        f"/api/v1/documents/{first_document['id']}/extraction", headers=AUTH
-    )
+    gstr_path = DEMO_FILES / "GSTR2B_April.json"
+    with gstr_path.open("rb") as handle:
+        gstr2b = client.post(
+            f"/api/v1/applications/{application_id}/reconciliation/gstr2b",
+            headers=AUTH,
+            files={"file": (gstr_path.name, handle, "application/json")},
+        )
+    assert gstr2b.status_code == 201, gstr2b.text
+
+    extraction = client.get(f"/api/v1/documents/{first_document['id']}/extraction", headers=AUTH)
     assert extraction.status_code == 200, extraction.text
     approved = client.post(
         f"/api/v1/documents/{first_document['id']}/approve",
@@ -128,14 +144,10 @@ def test_complete_gst_readiness_walkthrough() -> None:
     )
     assert approved.status_code == 200, approved.text
 
-    validation = client.post(
-        f"/api/v1/applications/{application_id}/validate", headers=AUTH
-    )
+    validation = client.post(f"/api/v1/applications/{application_id}/validate", headers=AUTH)
     assert validation.status_code == 200, validation.text
 
-    reconciliation = client.post(
-        f"/api/v1/applications/{application_id}/reconcile", headers=AUTH
-    )
+    reconciliation = client.post(f"/api/v1/applications/{application_id}/reconcile", headers=AUTH)
     assert reconciliation.status_code == 200, reconciliation.text
     assert "summary" in reconciliation.json()
 
@@ -150,14 +162,10 @@ def test_complete_gst_readiness_walkthrough() -> None:
     assert answer.status_code == 200, answer.text
     assert answer.json()["citations"]
 
-    export = client.post(
-        f"/api/v1/applications/{application_id}/export", headers=AUTH
-    )
+    export = client.post(f"/api/v1/applications/{application_id}/export", headers=AUTH)
     assert export.status_code == 200, export.text
     assert set(export.json()) == {"readiness_pdf", "invoice_csv", "reconciliation_csv"}
 
-    audit = client.get(
-        f"/api/v1/applications/{application_id}/audit", headers=AUTH
-    )
+    audit = client.get(f"/api/v1/applications/{application_id}/audit", headers=AUTH)
     assert audit.status_code == 200, audit.text
     assert len(audit.json()) >= 5

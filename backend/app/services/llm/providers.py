@@ -12,6 +12,86 @@ import httpx
 from app.config import Settings
 
 
+def build_nvidia_text_payload(
+    *, model: str, system_prompt: str, user_prompt: str
+) -> dict[str, Any]:
+    return {
+        "model": model,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+
+
+def build_nvidia_vision_payload(
+    *,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    content: bytes,
+    mime_type: str,
+) -> dict[str, Any]:
+    encoded = base64.b64encode(content).decode("ascii")
+    return {
+        "model": model,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
+                    },
+                ],
+            },
+        ],
+    }
+
+
+async def complete_nvidia_json(
+    settings: Settings,
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    content: bytes | None = None,
+    mime_type: str | None = None,
+) -> dict[str, Any]:
+    if not settings.nvidia_api_key or not settings.nvidia_small_model:
+        raise RuntimeError("NVIDIA small-model configuration is incomplete")
+    if content is not None:
+        if not settings.nvidia_vision_model:
+            raise RuntimeError("NVIDIA vision capability is not configured")
+        if not mime_type or not mime_type.startswith("image/"):
+            raise RuntimeError("NVIDIA vision input must be an image")
+        payload = build_nvidia_vision_payload(
+            model=settings.nvidia_vision_model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            content=content,
+            mime_type=mime_type,
+        )
+    else:
+        payload = build_nvidia_text_payload(
+            model=settings.nvidia_small_model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
+    url = f"{settings.nvidia_base_url.rstrip('/')}/chat/completions"
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(
+            url,
+            headers={"Authorization": f"Bearer {settings.nvidia_api_key}"},
+            json=payload,
+        )
+        response.raise_for_status()
+        return _json_from_text(response.json()["choices"][0]["message"]["content"])
 
 
 def build_gemini_document_payload(
@@ -93,26 +173,37 @@ def _json_from_text(text: str) -> dict[str, Any]:
     return json.loads(text[start : end + 1])
 
 
-async def complete_json(settings: Settings, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+async def complete_groq_json(
+    settings: Settings, *, system_prompt: str, user_prompt: str
+) -> dict[str, Any]:
+    """Call the Phase 3 heavy provider directly, independent of legacy settings."""
+    if not settings.groq_api_key:
+        raise RuntimeError("GROQ_API_KEY is not configured")
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {settings.groq_api_key}"}
+    payload = {
+        "model": settings.effective_groq_model,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        return _json_from_text(response.json()["choices"][0]["message"]["content"])
+
+
+async def complete_json(
+    settings: Settings, *, system_prompt: str, user_prompt: str
+) -> dict[str, Any]:
     provider = settings.text_llm_provider
     if provider == "groq":
-        if not settings.groq_api_key:
-            raise RuntimeError("GROQ_API_KEY is not configured")
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {settings.groq_api_key}"}
-        payload = {
-            "model": settings.groq_model,
-            "temperature": 0,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        }
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            return _json_from_text(response.json()["choices"][0]["message"]["content"])
+        return await complete_groq_json(
+            settings, system_prompt=system_prompt, user_prompt=user_prompt
+        )
 
     if provider == "openai":
         if not settings.openai_api_key:

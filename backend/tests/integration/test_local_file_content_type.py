@@ -21,7 +21,7 @@ def test_signed_local_pdf_uses_pdf_content_type() -> None:
             "/api/v1/applications/30000000-0000-0000-0000-000000000001/checklist",
             headers=AUTH,
         ).json()
-        if row["requirement_type"] == "purchase_invoice"
+        if row["requirement_type"] == "purchase_expense_invoices"
     )
     source = ROOT / "demo_data" / "documents" / "Purchase_Invoice_SD-1042.pdf"
     with source.open("rb") as handle:
