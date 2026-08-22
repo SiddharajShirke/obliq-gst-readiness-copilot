@@ -65,6 +65,30 @@ There is no monetary tolerance. Alerts are created only after a CA presses **Rai
 NVIDIA then explains the immutable evidence, with Groq as a failure fallback. AI never
 changes source values, reconciliation outcomes, ITC status, or alert lifecycle.
 
+## Phase 4 application-scoped RAG
+
+The workspace now mounts one persistent right-side **Ask OBLIQ** drawer. Every request is
+bound to the authenticated user and the effective application ID (including retained demo
+clones). Exact checklist, extraction, validation, reconciliation, and raised-alert facts are
+loaded through controlled repository functions. Approved document text/rows are embedded
+into `document_chunks` and retrieved through an application- and firm-scoped pgvector RPC;
+firm/shared GST knowledge continues to use the existing knowledge index.
+
+The controlled LangGraph validates access, classifies intent, loads structured facts,
+retrieves scoped evidence, optionally asks Groq for a compact grounded narrative, verifies
+backend-built citations, and writes a safe audit event. Exact transaction and reconciliation
+answers are rendered deterministically from stored Phase 3 results, so the LLM never
+recomputes matches or invents values. `developer_ground_truth`, rejected/failed documents,
+unknown files, and unapproved extractions are never indexed. Uploaded text is treated as
+untrusted evidence rather than instructions.
+
+Deployment uses the same 384-dimensional
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` embedding path as local
+development. The deployment image must have enough memory for Sentence Transformers and
+must either permit the model's first-start Hugging Face download or include a pre-populated
+model cache. No second vector database, reranker, queue, or Phase 5 Vonage media ingestion
+is required.
+
 ## Repository structure
 
 ```text

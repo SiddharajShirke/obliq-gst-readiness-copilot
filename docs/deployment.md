@@ -8,6 +8,14 @@ For Render or Railway, use the existing backend Dockerfile, expose port 8000, an
 
 Set backend-only variables in the FastAPI service, including Vonage credentials and signature secret, `PUBLIC_BASE_URL`, `FRONTEND_URL`, all HMAC peppers (including `UPLOAD_TOKEN_PEPPER`), and the Fernet key. Never expose these as `NEXT_PUBLIC_*` values. Keep the Supabase service-role key and LLM keys backend-only as before.
 
+Phase 4 also requires `GROQ_API_KEY`, the configured Groq text model, and the fixed
+384-dimensional embedding settings from `.env.example`. The declared `sentence-transformers`
+dependency works unchanged locally and after deployment, but the backend must have enough
+memory and outbound access for the model's first Hugging Face download (or a model cache
+baked into the same deployment image). Apply `202608230003_application_scoped_rag.sql`
+before enabling the assistant so `document_chunks`, `assistant_messages`, and the scoped
+pgvector RPC are available.
+
 Example:
 
 ```env
