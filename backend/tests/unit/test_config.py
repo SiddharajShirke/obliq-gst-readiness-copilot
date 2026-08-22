@@ -43,3 +43,28 @@ def test_non_test_runtime_rejects_mock_or_removed_providers() -> None:
         Settings(app_env="development", whatsapp_provider="unsupported", _env_file=None)
     with pytest.raises(ValidationError, match="WHATSAPP_PROVIDER must be vonage"):
         Settings(app_env="development", whatsapp_provider="twilio", _env_file=None)
+
+
+def test_non_test_runtime_requires_secure_upload_pepper() -> None:
+    with pytest.raises(ValidationError, match="UPLOAD_TOKEN_PEPPER"):
+        Settings(
+            app_env="development",
+            whatsapp_provider="vonage",
+            vonage_api_key="api-key",
+            vonage_api_secret="api-secret",
+            vonage_signature_secret="signature-secret",
+            vonage_whatsapp_from="447700900001",
+            vonage_sandbox_join_message="allow test",
+            public_base_url="https://api.example.com",
+            whatsapp_demo_token_pepper="demo-pepper",
+            whatsapp_phone_hash_pepper="phone-pepper",
+            whatsapp_phone_encryption_key="encryption-key",
+            upload_token_pepper="",
+            _env_file=None,
+        )
+
+
+def test_default_secure_upload_extensions_include_docx() -> None:
+    settings = Settings(app_env="test", whatsapp_provider="mock", _env_file=None)
+
+    assert "docx" in settings.allowed_extensions

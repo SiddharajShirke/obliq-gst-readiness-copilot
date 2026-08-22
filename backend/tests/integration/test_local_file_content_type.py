@@ -15,11 +15,19 @@ def test_signed_local_pdf_uses_pdf_content_type() -> None:
         headers=AUTH,
     )
     assert link.status_code == 201, link.text
+    requirement = next(
+        row
+        for row in client.get(
+            "/api/v1/applications/30000000-0000-0000-0000-000000000001/checklist",
+            headers=AUTH,
+        ).json()
+        if row["requirement_type"] == "purchase_invoice"
+    )
     source = ROOT / "demo_data" / "documents" / "Purchase_Invoice_SD-1042.pdf"
     with source.open("rb") as handle:
         uploaded = client.post(
             f"/api/v1/public/upload/{link.json()['token']}",
-            data={"requirement_type": "purchase_invoice"},
+            data={"requirement_id": requirement["id"]},
             files={"file": (source.name, handle, "application/pdf")},
         )
     assert uploaded.status_code == 201, uploaded.text

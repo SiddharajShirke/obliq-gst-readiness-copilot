@@ -11,6 +11,7 @@ os.environ["WHATSAPP_PROVIDER"] = "mock"
 os.environ["WHATSAPP_DEMO_TOKEN_PEPPER"] = "test-token-pepper"
 os.environ["WHATSAPP_PHONE_HASH_PEPPER"] = "test-phone-pepper"
 os.environ["WHATSAPP_PHONE_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+os.environ["UPLOAD_TOKEN_PEPPER"] = "test-upload-pepper"
 os.environ["VONAGE_API_KEY"] = "test-api-key"
 os.environ["VONAGE_API_SECRET"] = "test-api-secret"
 os.environ["VONAGE_SIGNATURE_SECRET"] = "test-signature-secret"

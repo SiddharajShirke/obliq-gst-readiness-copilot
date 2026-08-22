@@ -108,7 +108,7 @@ class SupabaseStore:
             self.client.storage.from_(bucket).upload(
                 path,
                 content,
-                file_options={"content-type": mime_type, "upsert": "true"},
+                file_options={"content-type": mime_type, "upsert": "false"},
             )
             return path
 
@@ -116,6 +116,13 @@ class SupabaseStore:
 
     async def download_file(self, bucket: str, path: str) -> bytes:
         return await asyncio.to_thread(lambda: self.client.storage.from_(bucket).download(path))
+
+    async def delete_file(self, bucket: str, path: str) -> bool:
+        def run() -> bool:
+            self.client.storage.from_(bucket).remove([path])
+            return True
+
+        return await asyncio.to_thread(run)
 
     async def create_signed_url(self, bucket: str, path: str, expires_in: int = 600) -> str:
         def run() -> str:

@@ -6,12 +6,13 @@ import asyncio
 import hashlib
 import hmac
 import math
+import os
 import re
 import shutil
 import time
 import uuid
 from copy import deepcopy
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -443,6 +444,102 @@ class MemoryStore:
                     }
                 )
                 return [deepcopy(session)]
+        if function_name == "complete_secure_document_upload":
+            async with self.lock:
+                application = next(
+                    (
+                        row
+                        for row in self.tables["applications"]
+                        if row["id"] == params["p_application_id"]
+                        and row["firm_id"] == params["p_firm_id"]
+                        and row["client_id"] == params["p_client_id"]
+                        and row.get("demo_session_id") == params["p_demo_session_id"]
+                    ),
+                    None,
+                )
+                requirement = next(
+                    (
+                        row
+                        for row in self.tables["document_requirements"]
+                        if row["id"] == params["p_requirement_id"]
+                        and row["application_id"] == params["p_application_id"]
+                    ),
+                    None,
+                )
+                if not application or not requirement:
+                    return []
+                session = None
+                if params["p_demo_session_id"]:
+                    session = next(
+                        (
+                            row
+                            for row in self.tables["whatsapp_demo_sessions"]
+                            if row["id"] == params["p_demo_session_id"]
+                            and row.get("session_application_id")
+                            == params["p_application_id"]
+                            and row.get("status") == "active"
+                        ),
+                        None,
+                    )
+                    if not session:
+                        return []
+                if any(
+                    row.get("application_id") == params["p_application_id"]
+                    and row.get("sha256") == params["p_sha256"]
+                    and row.get("source") == "secure_link"
+                    and row.get("processing_status") != "upload_failed"
+                    for row in self.tables["documents"]
+                ):
+                    raise ValueError("Duplicate secure upload")
+                now = params["p_completed_at"]
+                document = {
+                    "id": params["p_document_id"],
+                    "firm_id": params["p_firm_id"],
+                    "client_id": params["p_client_id"],
+                    "application_id": params["p_application_id"],
+                    "demo_session_id": params["p_demo_session_id"],
+                    "requirement_id": params["p_requirement_id"],
+                    "source": "secure_link",
+                    "original_name": params["p_original_name"],
+                    "safe_name": params["p_safe_name"],
+                    "mime_type": params["p_mime_type"],
+                    "storage_bucket": params["p_storage_bucket"],
+                    "storage_path": params["p_storage_path"],
+                    "file_size": params["p_file_size"],
+                    "sha256": params["p_sha256"],
+                    "document_type": None,
+                    "processing_status": "awaiting_processing",
+                    "uploaded_by_user_id": None,
+                    "uploaded_from_phone": None,
+                    "upload_completed_at": now,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                self.tables["documents"].append(document)
+                requirement.update({"status": "received", "updated_at": now})
+                remaining = any(
+                    row.get("application_id") == application["id"]
+                    and row.get("required", True)
+                    and row.get("status") == "missing"
+                    for row in self.tables["document_requirements"]
+                )
+                application.update(
+                    {
+                        "status": "partially_received" if remaining else "documents_complete",
+                        "updated_at": now,
+                    }
+                )
+                if session:
+                    session.update(
+                        {
+                            "current_step": (
+                                "documents_received" if remaining else "documents_complete"
+                            ),
+                            "last_activity_at": now,
+                            "updated_at": now,
+                        }
+                    )
+                return [deepcopy(document)]
         if function_name == "match_knowledge_chunks":
             query = params.get("query_embedding") or []
             firm_id = params.get("user_firm_id")
@@ -483,13 +580,20 @@ class MemoryStore:
         return []
 
     async def upload_file(self, bucket: str, path: str, content: bytes, mime_type: str) -> str:
-        target = self.settings.local_upload_dir / bucket / path
+        target = self._storage_target(bucket, path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
         return path
 
     async def download_file(self, bucket: str, path: str) -> bytes:
-        return (self.settings.local_upload_dir / bucket / path).read_bytes()
+        return self._storage_target(bucket, path).read_bytes()
+
+    async def delete_file(self, bucket: str, path: str) -> bool:
+        target = self._storage_target(bucket, path)
+        if not target.exists():
+            return False
+        target.unlink()
+        return True
 
     async def create_signed_url(self, bucket: str, path: str, expires_in: int = 600) -> str:
         expires = int(time.time()) + expires_in
@@ -510,3 +614,9 @@ class MemoryStore:
             return None
         user_id, role, email = match
         return {"id": user_id, "firm_id": DEMO_FIRM_ID, "role": role, "email": email}
+
+    def _storage_target(self, bucket: str, path: str) -> Path:
+        target = (self.settings.local_upload_dir / bucket / path).resolve()
+        if os.name == "nt" and not str(target).startswith("\\\\?\\"):
+            return Path(f"\\\\?\\{target}")
+        return target

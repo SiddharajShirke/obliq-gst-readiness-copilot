@@ -34,7 +34,7 @@ def make_invoice_pdf() -> bytes:
     return output.getvalue()
 
 
-def test_secure_upload_link_processes_document_and_creates_extraction() -> None:
+def test_secure_upload_link_stores_document_before_explicit_processing() -> None:
     link_response = client.post(f"/api/v1/applications/{APP_ID}/upload-link", headers=AUTH)
     assert link_response.status_code == 201
     token = link_response.json()["token"]
@@ -42,15 +42,28 @@ def test_secure_upload_link_processes_document_and_creates_extraction() -> None:
     public_context = client.get(f"/api/v1/public/upload/{token}")
     assert public_context.status_code == 200
     assert public_context.json()["client"]["business_name"] == "Raj Traders"
+    purchase_requirement = next(
+        row
+        for row in client.get(
+            f"/api/v1/applications/{APP_ID}/checklist", headers=AUTH
+        ).json()
+        if row["requirement_type"] == "purchase_invoice"
+    )
 
     upload = client.post(
         f"/api/v1/public/upload/{token}",
-        data={"requirement_type": "purchase_invoice"},
+        data={"requirement_id": purchase_requirement["id"]},
         files={"file": ("Purchase_Invoice_SD-2042.pdf", make_invoice_pdf(), "application/pdf")},
     )
     assert upload.status_code == 201
     document = upload.json()
-    assert document["processing_status"] == "needs_review"
+    assert document["processing_status"] == "awaiting_processing"
+
+    extraction = client.get(f"/api/v1/documents/{document['id']}/extraction", headers=AUTH)
+    assert extraction.status_code == 404
+
+    processed = client.post(f"/api/v1/documents/{document['id']}/process", headers=AUTH)
+    assert processed.status_code == 200
 
     extraction = client.get(f"/api/v1/documents/{document['id']}/extraction", headers=AUTH)
     assert extraction.status_code == 200
@@ -64,7 +77,7 @@ def test_secure_upload_rejects_unknown_checklist_category() -> None:
 
     upload = client.post(
         f"/api/v1/public/upload/{token}",
-        data={"requirement_type": "bank_statement"},
+        data={"requirement_id": "ffffffff-ffff-ffff-ffff-ffffffffffff"},
         files={"file": ("statement.pdf", make_invoice_pdf(), "application/pdf")},
     )
 

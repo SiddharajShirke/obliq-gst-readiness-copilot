@@ -66,9 +66,9 @@ class Settings(BaseSettings):
     ocr_enabled: bool = True
     tesseract_cmd: str = ""
     max_upload_mb: int = 20
-    allowed_upload_extensions: str = "pdf,png,jpg,jpeg,csv,xlsx,json"
+    allowed_upload_extensions: str = "pdf,png,jpg,jpeg,csv,xlsx,docx,json"
     upload_link_ttl_hours: int = 72
-    upload_token_pepper: str = "prototype-pepper"
+    upload_token_pepper: str = ""
     local_upload_dir: Path = Path(".runtime/uploads")
     local_export_dir: Path = Path(".runtime/exports")
 
@@ -126,6 +126,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Vonage WhatsApp configuration is incomplete: " + ", ".join(missing)
             )
+        if not self.upload_token_pepper:
+            raise ValueError("Secure upload configuration is incomplete: UPLOAD_TOKEN_PEPPER")
         return self
 
     @property

@@ -45,6 +45,20 @@ async def cleanup_demo_sessions(store: DataStore, settings: Settings) -> dict[st
             await store.delete_row("whatsapp_messages", message["id"])
         application_id = session.get("session_application_id")
         if application_id:
+            for document in await store.list_rows(
+                "documents", {"application_id": application_id}
+            ):
+                if document.get("storage_path"):
+                    await store.delete_file(
+                        document.get("storage_bucket")
+                        or settings.supabase_documents_bucket,
+                        document["storage_path"],
+                    )
+                await store.delete_row("documents", document["id"])
+            for upload_link in await store.list_rows(
+                "upload_links", {"application_id": application_id}
+            ):
+                await store.delete_row("upload_links", upload_link["id"])
             for requirement in await store.list_rows(
                 "document_requirements", {"application_id": application_id}
             ):

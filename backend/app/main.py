@@ -7,10 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.config import get_settings
-from app.middleware import UnhandledExceptionBoundaryMiddleware
+from app.middleware import UnhandledExceptionBoundaryMiddleware, UploadTokenRedactionFilter
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level)
+logging.getLogger("uvicorn.access").addFilter(UploadTokenRedactionFilter())
 
 app = FastAPI(
     title=settings.app_name,
