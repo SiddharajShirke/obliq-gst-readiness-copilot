@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ApplicationCreate(BaseModel):
@@ -16,7 +16,7 @@ class ApplicationCreate(BaseModel):
     reviewer_id: str | None = None
 
     @model_validator(mode="after")
-    def validate_period(self) -> "ApplicationCreate":
+    def validate_period(self) -> ApplicationCreate:
         if self.period_end < self.period_start:
             raise ValueError("period_end must be on or after period_start")
         return self
@@ -30,3 +30,10 @@ class ApplicationUpdate(BaseModel):
     filing_date: date | None = None
     arn: str | None = None
     final_notes: str | None = None
+
+    @field_validator("status")
+    @classmethod
+    def block_unimplemented_filing_readiness(cls, value: str | None) -> str | None:
+        if value in {"ready_for_ca_review", "ready_for_filing"}:
+            raise ValueError("Filing readiness is unavailable during document collection")
+        return value

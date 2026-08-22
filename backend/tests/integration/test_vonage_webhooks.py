@@ -164,6 +164,23 @@ def test_invalid_signature_changes_nothing_and_valid_start_is_idempotent(
     session = asyncio.run(store.get_row("whatsapp_demo_sessions", created["session_id"]))
     assert session["status"] == "active"
     assert session["judge_phone_encrypted"] != "+919876543210"
+    links = asyncio.run(
+        store.list_rows("upload_links", {"demo_session_id": created["session_id"]})
+    )
+    assert links == []
+    assert "/upload/" not in str(provider.sent[0]["text"])
+    assert "CA will send the secure upload link after review" in str(
+        provider.sent[0]["text"]
+    )
+    outbound = asyncio.run(
+        store.list_rows(
+            "whatsapp_messages",
+            {"demo_session_id": created["session_id"], "direction": "outbound"},
+        )
+    )
+    assert len(outbound) == 1
+    assert "/upload/" not in outbound[0]["content"]
+    assert str(provider.sent[0]["text"]) == outbound[0]["content"]
 
 
 def test_invalid_start_rate_limit_suppresses_outbound_reply(
@@ -288,7 +305,8 @@ def test_commands_media_boundary_escalation_and_status_callback(vonage_client) -
         "",
         message_type="image",
     ).status_code == 200
-    assert "next phase" in provider.sent[-1]["text"].lower()
+    assert "secure upload link" in provider.sent[-1]["text"].lower()
+    assert "not downloaded" in provider.sent[-1]["text"].lower()
     assert len(asyncio.run(store.list_rows("documents"))) == documents_before
 
     outbound_uuid = "00000000-0000-4000-8000-000000000001"

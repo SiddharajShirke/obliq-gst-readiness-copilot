@@ -6,7 +6,7 @@ client = TestClient(app)
 AUTH = {"Authorization": "Bearer demo-admin-token"}
 
 
-def test_outbound_whatsapp_requires_client_consent() -> None:
+def test_outbound_whatsapp_never_falls_back_to_unbound_client_phone() -> None:
     created_client = client.post(
         "/api/v1/clients",
         headers=AUTH,
@@ -52,4 +52,4 @@ def test_outbound_whatsapp_requires_client_consent() -> None:
     )
 
     assert send.status_code == 409
-    assert "consent" in send.json()["detail"].lower()
+    assert "reconnect whatsapp" in send.json()["detail"].lower()

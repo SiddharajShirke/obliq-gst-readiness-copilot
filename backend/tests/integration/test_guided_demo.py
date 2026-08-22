@@ -17,15 +17,31 @@ def _upload(application_id: str, client_id: str, requirement_type: str, filename
     )
     assert link.status_code == 201, link.text
     token = link.json()["token"]
+    checklist = client.get(
+        f"/api/v1/applications/{application_id}/checklist", headers=AUTH
+    ).json()
+    requirement_id = next(
+        row["id"] for row in checklist if row["requirement_type"] == requirement_type
+    )
+    mime_types = {
+        ".csv": "text/csv",
+        ".json": "application/json",
+        ".pdf": "application/pdf",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }
     path = DEMO_FILES / filename
     with path.open("rb") as handle:
         response = client.post(
             f"/api/v1/public/upload/{token}",
-            data={"requirement_type": requirement_type},
-            files={"file": (path.name, handle, "application/octet-stream")},
+            data={"requirement_id": requirement_id},
+            files={"file": (path.name, handle, mime_types[path.suffix.lower()])},
         )
     assert response.status_code == 201, response.text
-    return response.json()
+    document = response.json()
+    assert document["processing_status"] == "awaiting_processing"
+    processed = client.post(f"/api/v1/documents/{document['id']}/process", headers=AUTH)
+    assert processed.status_code == 200, processed.text
+    return document
 
 
 def test_complete_gst_readiness_walkthrough() -> None:
@@ -69,12 +85,8 @@ def test_complete_gst_readiness_walkthrough() -> None:
     assert draft.status_code == 201, draft.text
     reminder = draft.json()
     assert reminder["status"] == "awaiting_approval"
-    sent = client.post(
-        f"/api/v1/applications/{application_id}/document-request/approve-send",
-        headers=AUTH,
-        json={"reminder_id": reminder["id"], "message": reminder["draft_message"]},
-    )
-    assert sent.status_code == 200, sent.text
+    assert reminder["requires_connection"] is True
+    assert reminder["upload_url"] is None
 
     first_document = _upload(
         application_id, client_id, "sales_register", "Sales_Register_April.csv"
@@ -97,12 +109,7 @@ def test_complete_gst_readiness_walkthrough() -> None:
     assert reminder_draft.status_code == 201, reminder_draft.text
     missing_reminder = reminder_draft.json()
     assert "Purchase Register" in missing_reminder["draft_message"]
-    reminder_sent = client.post(
-        f"/api/v1/reminders/{missing_reminder['id']}/approve-send",
-        headers=AUTH,
-        json={"reminder_id": missing_reminder["id"], "message": missing_reminder["draft_message"]},
-    )
-    assert reminder_sent.status_code == 200, reminder_sent.text
+    assert missing_reminder["requires_connection"] is True
 
     _upload(application_id, client_id, "purchase_register", "Purchase_Register_April.xlsx")
     checklist = client.get(

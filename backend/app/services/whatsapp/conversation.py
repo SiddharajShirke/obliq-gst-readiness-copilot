@@ -4,11 +4,13 @@ import re
 from dataclasses import dataclass
 
 from app.repositories.base import DataStore
+from app.services.document_collection import get_document_collection_status
 
 MEDIA_PHASE_MESSAGE = (
     "Your WhatsApp attachment reached the OBLIQ webhook successfully.\n\n"
-    "Direct file download, Supabase document storage, classification and AI extraction "
-    "will be implemented in the next phase."
+    "The attachment itself was not downloaded or stored. Please use the secure upload "
+    "link sent by your CA. Direct WhatsApp attachment processing remains "
+    "deferred."
 )
 
 
@@ -35,7 +37,10 @@ def _numbered(labels: list[str]) -> str:
     return "\n".join(f"{index}. {label}" for index, label in enumerate(labels, 1))
 
 
-async def build_welcome_message(store: DataStore, session: dict) -> str:
+async def build_welcome_message(
+    store: DataStore,
+    session: dict,
+) -> str:
     application, client, checklist = await _context(store, session)
     labels = [row["label"] for row in checklist if row.get("required", True)]
     return (
@@ -46,8 +51,9 @@ async def build_welcome_message(store: DataStore, session: dict) -> str:
         "The following documents are required:\n\n"
         f"{_numbered(labels)}\n\n"
         "The live Vonage WhatsApp connection is active.\n\n"
-        "Direct WhatsApp document upload and AI processing will be enabled in the next "
-        "implementation phase.\n\n"
+        "Your CA will send the secure upload link after review. Documents uploaded "
+        "through that link are stored privately and marked as awaiting processing. "
+        "Direct WhatsApp attachments are not processed.\n\n"
         "You can reply:\nSTATUS\nHELP\nCANCEL"
     )
 
@@ -70,11 +76,10 @@ async def handle_text_command(
 ) -> ConversationReply:
     command = body.strip().upper()
     if command == "STATUS":
-        application, client, checklist = await _context(store, session)
+        application, client, _ = await _context(store, session)
+        collection = await get_document_collection_status(store, application["id"])
         pending = [
-            row["label"]
-            for row in checklist
-            if row.get("required", True) and row.get("status") != "approved"
+            row["label"] for row in collection["requirements"] if row["status"] == "missing"
         ]
         return ConversationReply(
             "status",
@@ -83,7 +88,8 @@ async def handle_text_command(
             f"GST Period: {application['period_label']}\n\n"
             "Pending document categories:\n\n"
             f"{_numbered(pending) if pending else 'None'}\n\n"
-            "Direct WhatsApp file processing will be enabled in the next phase.",
+            "Use the secure browser upload link sent by your CA. Direct WhatsApp "
+            "attachments are not processed.",
         )
     if command == "HELP":
         return ConversationReply(

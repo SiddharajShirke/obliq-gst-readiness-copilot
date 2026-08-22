@@ -158,6 +158,69 @@ async def regenerate_start_token(
     )
 
 
+async def reconnect_retained_session(
+    store: DataStore,
+    settings: Settings,
+    session_id: str,
+) -> RegeneratedStartToken:
+    session = await store.get_row("whatsapp_demo_sessions", session_id)
+    if not session or session.get("status") not in {"expired", "cancelled"}:
+        raise ValueError("Only an expired or cancelled retained session can reconnect")
+    created_at = datetime.fromisoformat(
+        str(session["created_at"]).replace("Z", "+00:00")
+    )
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    retained_until = created_at + timedelta(
+        hours=settings.whatsapp_demo_data_retention_hours
+    )
+    now = _now()
+    if retained_until <= now:
+        raise ValueError("Retained session data is no longer available")
+    clone = await store.get_row("applications", str(session["session_application_id"]))
+    if not clone or clone.get("demo_session_id") != session_id:
+        raise ValueError("Retained session application is no longer available")
+
+    token = generate_start_token()
+    token_expires = now + timedelta(
+        minutes=settings.whatsapp_demo_token_expiry_minutes
+    )
+    session_expires = now + timedelta(
+        minutes=settings.whatsapp_demo_session_expiry_minutes
+    )
+    await store.update_row(
+        "whatsapp_demo_sessions",
+        session_id,
+        {
+            "start_token_hash": hash_demo_token(
+                token,
+                pepper=settings.whatsapp_demo_token_pepper,
+                domain="start",
+            ),
+            "judge_phone_hash": None,
+            "judge_phone_encrypted": None,
+            "judge_phone_last_four": None,
+            "provider_user_id_hash": None,
+            "status": "waiting_for_start",
+            "current_step": "scan_start_qr",
+            "token_expires_at": token_expires.isoformat(),
+            "expires_at": session_expires.isoformat(),
+            "connected_at": None,
+            "completed_at": None,
+            "cancelled_at": None,
+            "anonymized_at": None,
+            "last_activity_at": now.isoformat(),
+        },
+    )
+    message = f"START OBLIQ DEMO {token}"
+    return RegeneratedStartToken(
+        start_token=token,
+        start_message=message,
+        start_whatsapp_url=_whatsapp_url(settings, message),
+        token_expires_at=token_expires.isoformat(),
+    )
+
+
 async def bind_demo_session(
     store: DataStore,
     settings: Settings,

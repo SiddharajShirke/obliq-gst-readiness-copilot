@@ -259,9 +259,10 @@ async def approve_application(
     store: Annotated[DataStore, Depends(get_store)],
 ) -> dict:
     await require_firm_row(store, "applications", application_id, user.firm_id)
-    updated = await store.update_row("applications", application_id, {"status": "ready_for_filing"})
-    assert updated is not None
-    return updated
+    raise HTTPException(
+        status_code=409,
+        detail="Available after document processing and review.",
+    )
 
 
 @router.post("/applications/{application_id}/return")

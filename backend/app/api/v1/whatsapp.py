@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import (
@@ -16,14 +16,16 @@ from fastapi import (
 )
 from fastapi.responses import Response
 
-from app.agents.reminder_workflow import create_reminder_draft
+from app.agents.reminder_workflow import build_message, create_reminder_draft
 from app.config import Settings, get_settings
 from app.dependencies import current_user, require_firm_row, require_roles
+from app.middleware import redact_upload_token_path
 from app.repositories import DataStore, get_store
 from app.schemas.auth import UserContext
 from app.schemas.whatsapp import ReminderApproval
 from app.services.audit import record_audit
-from app.services.upload_tokens import issue_upload_token
+from app.services.document_collection import get_document_collection_status
+from app.services.secure_upload import create_secure_upload_link
 from app.services.whatsapp.base import WhatsAppSendError
 from app.services.whatsapp.cleanup import cleanup_demo_sessions
 from app.services.whatsapp.conversation import (
@@ -39,6 +41,7 @@ from app.services.whatsapp.sessions import (
     cancel_demo_session,
     create_demo_session,
     find_active_session_by_phone,
+    reconnect_retained_session,
     regenerate_start_token,
     verify_dashboard_access,
 )
@@ -103,6 +106,7 @@ async def _send_text(
     recipient_phone = protector.protect(recipient)
     provider = get_whatsapp_provider(settings)
     now = _now()
+    persisted_content = redact_upload_token_path(text)
     try:
         result = await provider.send_text(
             recipient=recipient,
@@ -127,7 +131,7 @@ async def _send_text(
                 "provider_message_id": result.provider_message_id,
                 "direction": "outbound",
                 "message_type": "text",
-                "content": text,
+                "content": persisted_content,
                 "delivery_status": result.initial_status,
                 "recipient_phone_encrypted": recipient_phone.encrypted,
                 "recipient_phone_last_four": recipient_phone.last_four,
@@ -160,7 +164,7 @@ async def _send_text(
                 "provider_message_id": None,
                 "direction": "outbound",
                 "message_type": "text",
-                "content": text,
+                "content": persisted_content,
                 "delivery_status": "failed",
                 "error_code": error_code,
                 "error_message": error_message,
@@ -212,30 +216,6 @@ async def _save_inbound(
     )
 
 
-async def _new_upload_link(
-    store: DataStore,
-    settings: Settings,
-    application: dict[str, Any],
-) -> str:
-    raw, record = issue_upload_token(
-        application_id=application["id"],
-        client_id=application["client_id"],
-        pepper=settings.upload_token_pepper,
-        ttl=timedelta(hours=settings.upload_link_ttl_hours),
-    )
-    await store.insert_row(
-        "upload_links",
-        {
-            "application_id": record.application_id,
-            "client_id": record.client_id,
-            "token_hash": record.token_hash,
-            "expires_at": record.expires_at.isoformat(),
-            "revoked_at": None,
-        },
-    )
-    return f"{settings.frontend_url}/upload/{raw}"
-
-
 async def _draft(
     *,
     application_id: str,
@@ -243,16 +223,54 @@ async def _draft(
     user: UserContext,
     store: DataStore,
     settings: Settings,
+    session_id: str | None = None,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
-    application = await require_firm_row(
+    base_application = await require_firm_row(
         store, "applications", application_id, user.firm_id
     )
-    client = await store.get_row("clients", application["client_id"])
+    if base_application.get("demo_session_id"):
+        raise HTTPException(status_code=404, detail="Base application not found")
+    client = await store.get_row("clients", base_application["client_id"])
     assert client is not None
-    checklist = await store.list_rows(
-        "document_requirements", {"application_id": application_id}, order="label"
-    )
-    upload_url = await _new_upload_link(store, settings, application)
+    session = None
+    application = base_application
+    if session_id and access_token:
+        candidate = await store.get_row("whatsapp_demo_sessions", session_id)
+        if (
+            candidate
+            and candidate.get("firm_id") == user.firm_id
+            and candidate.get("base_application_id") == application_id
+            and candidate.get("status") == "active"
+            and await verify_dashboard_access(store, settings, session_id, access_token)
+        ):
+            session = candidate
+            session_application = await store.get_row(
+                "applications", str(candidate["session_application_id"])
+            )
+            if session_application:
+                application = session_application
+
+    collection = await get_document_collection_status(store, str(application["id"]))
+    if reminder_type == "missing_document_reminder" and not collection["missing_count"]:
+        return {
+            "reminder_needed": False,
+            "message": (
+                "All required document categories have been received. "
+                "No reminder is needed."
+            ),
+        }
+    checklist = collection["requirements"]
+    upload_link = None
+    if session and reminder_type == "initial_document_request":
+        upload_link = await create_secure_upload_link(
+            store,
+            settings,
+            application=application,
+            demo_session=session,
+            created_by_user_id=user.user_id,
+        )
+    upload_url = upload_link.upload_url if upload_link else None
     reminder = await create_reminder_draft(
         store,
         {
@@ -262,20 +280,34 @@ async def _draft(
             "checklist": checklist,
             "upload_url": upload_url,
             "reminder_type": reminder_type,
+            "base_application_id": application_id,
+            "demo_session_id": session.get("id") if session else None,
+            "upload_link_id": upload_link.id if upload_link else None,
         },
     )
     await record_audit(
         store,
         firm_id=user.firm_id,
         user_id=user.user_id,
-        action="reminder.drafted",
+        action=(
+            "document_request_drafted"
+            if reminder_type == "initial_document_request"
+            else "reminder_drafted"
+        ),
         entity_type="reminder",
         entity_id=reminder["id"],
         client_id=client["id"],
-        application_id=application_id,
+        application_id=application["id"],
+        demo_session_id=session.get("id") if session else None,
         after_data={"type": reminder_type},
     )
-    return {**reminder, "upload_url": upload_url}
+    return {
+        **reminder,
+        "upload_url": upload_url,
+        "demo_session_id": session.get("id") if session else None,
+        "requires_connection": session is None,
+        "reminder_needed": True,
+    }
 
 
 async def _approve_send(
@@ -285,6 +317,8 @@ async def _approve_send(
     user: UserContext,
     store: DataStore,
     settings: Settings,
+    session_id: str | None,
+    access_token: str | None,
 ) -> dict[str, Any]:
     reminder = await store.get_row("reminders", reminder_id)
     if not reminder or reminder.get("firm_id") != user.firm_id:
@@ -294,17 +328,33 @@ async def _approve_send(
     client = await store.get_row("clients", reminder["client_id"])
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
-    if not client.get("whatsapp_consent"):
+    reminder_session_id = reminder.get("demo_session_id")
+    if not reminder_session_id or reminder_session_id != session_id:
+        raise HTTPException(status_code=409, detail="Reconnect WhatsApp before sending")
+    session = await store.get_row("whatsapp_demo_sessions", str(reminder_session_id))
+    if (
+        not session
+        or session.get("status") != "active"
+        or not access_token
+        or not await verify_dashboard_access(
+            store, settings, str(reminder_session_id), access_token
+        )
+        or not session.get("judge_phone_encrypted")
+    ):
+        raise HTTPException(status_code=409, detail="Reconnect WhatsApp before sending")
+    if message_override is None and "[REDACTED]" in reminder["draft_message"]:
         raise HTTPException(
-            status_code=409,
-            detail="Client WhatsApp consent is required before sending an outbound message",
+            status_code=400,
+            detail="Approved message is required for a secure upload link",
         )
     text = message_override or reminder["draft_message"]
+    persisted_text = redact_upload_token_path(text)
     protector = _protector(settings)
-    recipient = protector.protect(client["whatsapp_phone"])
+    recipient_value = protector.decrypt(session["judge_phone_encrypted"])
+    recipient = protector.protect(recipient_value)
     provider = get_whatsapp_provider(settings)
     result = await provider.send_text(
-        recipient=client["whatsapp_phone"],
+        recipient=recipient_value,
         text=text,
         status_callback=_callback_url(settings),
     )
@@ -314,12 +364,12 @@ async def _approve_send(
         {
             "firm_id": user.firm_id,
             "client_id": client["id"],
-            "application_id": reminder["application_id"],
-            "demo_session_id": None,
+            "application_id": session["session_application_id"],
+            "demo_session_id": session["id"],
             "provider": result.provider,
             "direction": "outbound",
             "message_type": "text",
-            "content": text,
+            "content": persisted_text,
             "provider_message_id": result.provider_message_id,
             "recipient_phone_encrypted": recipient.encrypted,
             "recipient_phone_last_four": recipient.last_four,
@@ -333,12 +383,13 @@ async def _approve_send(
         "reminders",
         reminder_id,
         {
-            "approved_message": text,
+            "approved_message": persisted_text,
             "status": "sent",
             "approved_by": user.user_id,
             "approved_at": now,
             "sent_at": now,
             "provider": result.provider,
+            "provider_message_id": result.provider_message_id,
         },
     )
     if reminder["reminder_type"] == "initial_document_request":
@@ -349,11 +400,16 @@ async def _approve_send(
         store,
         firm_id=user.firm_id,
         user_id=user.user_id,
-        action="reminder.approved_and_sent",
+        action=(
+            "document_request_sent"
+            if reminder["reminder_type"] == "initial_document_request"
+            else "reminder_sent"
+        ),
         entity_type="reminder",
         entity_id=reminder_id,
         client_id=client["id"],
         application_id=reminder["application_id"],
+        demo_session_id=session["id"],
         after_data={"provider": result.provider, "message_id": result.provider_message_id},
     )
     assert updated is not None
@@ -368,6 +424,12 @@ async def draft_document_request(
     ],
     store: Annotated[DataStore, Depends(get_store)],
     settings: Annotated[Settings, Depends(get_settings)],
+    session_id: Annotated[
+        str | None, Header(alias="X-OBLIQ-Demo-Session-Id")
+    ] = None,
+    access_token: Annotated[
+        str | None, Header(alias="X-OBLIQ-Demo-Access-Token")
+    ] = None,
 ) -> dict:
     return await _draft(
         application_id=application_id,
@@ -375,6 +437,8 @@ async def draft_document_request(
         user=user,
         store=store,
         settings=settings,
+        session_id=session_id,
+        access_token=access_token,
     )
 
 
@@ -387,9 +451,18 @@ async def approve_document_request(
     ],
     store: Annotated[DataStore, Depends(get_store)],
     settings: Annotated[Settings, Depends(get_settings)],
+    session_id: Annotated[
+        str | None, Header(alias="X-OBLIQ-Demo-Session-Id")
+    ] = None,
+    access_token: Annotated[
+        str | None, Header(alias="X-OBLIQ-Demo-Access-Token")
+    ] = None,
 ) -> dict:
     reminder = await store.get_row("reminders", payload.reminder_id)
-    if not reminder or reminder.get("application_id") != application_id:
+    reminder_application_id = reminder.get(
+        "base_application_id", reminder.get("application_id")
+    ) if reminder else None
+    if not reminder or reminder_application_id != application_id:
         raise HTTPException(status_code=404, detail="Reminder not found for this application")
     return await _approve_send(
         reminder_id=payload.reminder_id,
@@ -397,6 +470,8 @@ async def approve_document_request(
         user=user,
         store=store,
         settings=settings,
+        session_id=session_id,
+        access_token=access_token,
     )
 
 
@@ -408,14 +483,26 @@ async def draft_missing_document_reminder(
     ],
     store: Annotated[DataStore, Depends(get_store)],
     settings: Annotated[Settings, Depends(get_settings)],
+    response: Response,
+    session_id: Annotated[
+        str | None, Header(alias="X-OBLIQ-Demo-Session-Id")
+    ] = None,
+    access_token: Annotated[
+        str | None, Header(alias="X-OBLIQ-Demo-Access-Token")
+    ] = None,
 ) -> dict:
-    return await _draft(
+    drafted = await _draft(
         application_id=application_id,
         reminder_type="missing_document_reminder",
         user=user,
         store=store,
         settings=settings,
+        session_id=session_id,
+        access_token=access_token,
     )
+    if drafted.get("reminder_needed") is False:
+        response.status_code = 200
+    return drafted
 
 
 @router.post("/reminders/{reminder_id}/approve-send")
@@ -427,6 +514,12 @@ async def approve_reminder(
     ],
     store: Annotated[DataStore, Depends(get_store)],
     settings: Annotated[Settings, Depends(get_settings)],
+    session_id: Annotated[
+        str | None, Header(alias="X-OBLIQ-Demo-Session-Id")
+    ] = None,
+    access_token: Annotated[
+        str | None, Header(alias="X-OBLIQ-Demo-Access-Token")
+    ] = None,
 ) -> dict:
     return await _approve_send(
         reminder_id=reminder_id,
@@ -434,7 +527,98 @@ async def approve_reminder(
         user=user,
         store=store,
         settings=settings,
+        session_id=session_id,
+        access_token=access_token,
     )
+
+
+@router.post("/reminders/{reminder_id}/prepare")
+async def prepare_pending_reminder(
+    reminder_id: str,
+    user: Annotated[
+        UserContext, Depends(require_roles("firm_admin", "gst_preparer", "reviewer"))
+    ],
+    store: Annotated[DataStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    session_id: Annotated[
+        str | None, Header(alias="X-OBLIQ-Demo-Session-Id")
+    ] = None,
+    access_token: Annotated[
+        str | None, Header(alias="X-OBLIQ-Demo-Access-Token")
+    ] = None,
+) -> dict:
+    reminder = await store.get_row("reminders", reminder_id)
+    if not reminder or reminder.get("firm_id") != user.firm_id:
+        raise HTTPException(status_code=404, detail="Reminder not found")
+    if reminder.get("status") != "awaiting_approval":
+        raise HTTPException(status_code=409, detail="Reminder is not awaiting approval")
+    if not session_id or not access_token:
+        raise HTTPException(status_code=409, detail="Connect WhatsApp before preparing")
+    session = await store.get_row("whatsapp_demo_sessions", session_id)
+    if (
+        not session
+        or session.get("firm_id") != user.firm_id
+        or session.get("base_application_id")
+        != reminder.get("base_application_id", reminder.get("application_id"))
+        or session.get("status") != "active"
+        or not await verify_dashboard_access(store, settings, session_id, access_token)
+    ):
+        raise HTTPException(status_code=409, detail="Connect WhatsApp before preparing")
+    application = await store.get_row(
+        "applications", str(session["session_application_id"])
+    )
+    client = await store.get_row("clients", reminder["client_id"])
+    if not application or not client:
+        raise HTTPException(status_code=404, detail="Session application was not found")
+    collection = await get_document_collection_status(store, application["id"])
+    if (
+        reminder["reminder_type"] == "missing_document_reminder"
+        and not collection["missing_count"]
+    ):
+        return {
+            "reminder_needed": False,
+            "message": (
+                "All required document categories have been received. "
+                "No reminder is needed."
+            ),
+        }
+    upload_link = None
+    if reminder["reminder_type"] == "initial_document_request":
+        upload_link = await create_secure_upload_link(
+            store,
+            settings,
+            application=application,
+            demo_session=session,
+            created_by_user_id=user.user_id,
+        )
+    message = build_message(
+        {
+            "firm_id": user.firm_id,
+            "client": client,
+            "application": application,
+            "checklist": collection["requirements"],
+            "upload_url": upload_link.upload_url if upload_link else None,
+            "reminder_type": reminder["reminder_type"],
+        }
+    )
+    updated = await store.update_row(
+        "reminders",
+        reminder_id,
+        {
+            "application_id": application["id"],
+            "demo_session_id": session_id,
+            "upload_link_id": upload_link.id if upload_link else None,
+            "draft_message": redact_upload_token_path(message),
+        },
+    )
+    assert updated is not None
+    return {
+        **updated,
+        "draft_message": message,
+        "upload_url": upload_link.upload_url if upload_link else None,
+        "requires_connection": False,
+        "reminder_needed": True,
+    }
 
 
 @router.post("/reminders/{reminder_id}/cancel")
@@ -540,11 +724,18 @@ async def whatsapp_demo_session_status(
     application = await store.get_row("applications", session["session_application_id"])
     client = await store.get_row("clients", session["base_client_id"])
     assert application is not None and client is not None
-    checklist = await store.list_rows(
-        "document_requirements",
+    collection = await get_document_collection_status(store, application["id"])
+    documents = await store.list_rows(
+        "documents",
         {"application_id": application["id"]},
-        order="label",
+        order="created_at",
+        desc=True,
     )
+    latest_document_by_requirement: dict[str, dict] = {}
+    for document in documents:
+        requirement_id = document.get("requirement_id")
+        if requirement_id and requirement_id not in latest_document_by_requirement:
+            latest_document_by_requirement[requirement_id] = document
     outbound = await store.list_rows(
         "whatsapp_messages",
         {"demo_session_id": session_id, "direction": "outbound"},
@@ -565,9 +756,24 @@ async def whatsapp_demo_session_status(
         "gst_period": application["period_label"],
         "current_step": session.get("current_step"),
         "checklist": [
-            {"id": row["id"], "label": row["label"], "status": row["status"]}
-            for row in checklist
+            {
+                "id": row["id"],
+                "label": row["label"],
+                "status": row["status"],
+                "upload_status": (
+                    "uploaded"
+                    if row["id"] in latest_document_by_requirement
+                    else "pending"
+                ),
+                "processing_status": (
+                    latest_document_by_requirement[row["id"]].get("processing_status")
+                    if row["id"] in latest_document_by_requirement
+                    else None
+                ),
+            }
+            for row in collection["requirements"]
         ],
+        "collection": collection,
         "last_activity_at": session.get("last_activity_at"),
         "token_expires_at": session["token_expires_at"],
         "session_expires_at": session["expires_at"],
@@ -589,7 +795,62 @@ async def cancel_whatsapp_demo_session(
 ) -> dict:
     await _authorized_session(session_id, access_token, user, store, settings)
     session = await cancel_demo_session(store, session_id)
+    if session:
+        await record_audit(
+            store,
+            firm_id=user.firm_id,
+            user_id=user.user_id,
+            action="whatsapp_demo_session.cancelled",
+            entity_type="whatsapp_demo_session",
+            entity_id=session_id,
+            client_id=session.get("base_client_id"),
+            application_id=session.get("session_application_id"),
+            demo_session_id=session_id,
+        )
     return {"status": session["status"] if session else "cancelled"}
+
+
+@router.post("/whatsapp-demo-sessions/{session_id}/reconnect")
+async def reconnect_whatsapp_demo_session(
+    session_id: str,
+    user: Annotated[UserContext, Depends(current_user)],
+    store: Annotated[DataStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    access_token: Annotated[
+        str | None, Header(alias="X-OBLIQ-Demo-Access-Token")
+    ] = None,
+) -> dict:
+    await cleanup_demo_sessions(store, settings)
+    session = await _authorized_session(
+        session_id, access_token, user, store, settings
+    )
+    try:
+        regenerated = await reconnect_retained_session(
+            store, settings, session_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await record_audit(
+        store,
+        firm_id=user.firm_id,
+        user_id=user.user_id,
+        action="whatsapp_demo_session.reconnect_requested",
+        entity_type="whatsapp_demo_session",
+        entity_id=session_id,
+        client_id=session.get("base_client_id"),
+        application_id=session.get("session_application_id"),
+        demo_session_id=session_id,
+    )
+    return {
+        "session_id": session_id,
+        "status": "waiting_for_start",
+        "start_message": regenerated.start_message,
+        "start_whatsapp_url": regenerated.start_whatsapp_url,
+        "token_expires_at": regenerated.token_expires_at,
+        "session_expires_at": (
+            await store.get_row("whatsapp_demo_sessions", session_id)
+        )["expires_at"],
+    }
 
 
 @router.post("/whatsapp-demo-sessions/{session_id}/regenerate-start-token")

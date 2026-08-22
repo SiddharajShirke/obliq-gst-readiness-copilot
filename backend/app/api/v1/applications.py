@@ -1,14 +1,49 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 
+from app.config import Settings, get_settings
 from app.dependencies import current_user, require_firm_row, require_roles
 from app.repositories import DataStore, get_store
 from app.schemas.applications import ApplicationCreate, ApplicationUpdate
 from app.schemas.auth import UserContext
 from app.services.audit import record_audit
+from app.services.document_collection import get_document_collection_status
+from app.services.whatsapp.sessions import verify_dashboard_access
 
 router = APIRouter(tags=["applications"])
+
+
+@router.get("/applications/{application_id}/document-collection-status")
+async def document_collection_status(
+    application_id: str,
+    user: Annotated[UserContext, Depends(current_user)],
+    store: Annotated[DataStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    session_id: Annotated[
+        str | None, Header(alias="X-OBLIQ-Demo-Session-Id")
+    ] = None,
+    access_token: Annotated[
+        str | None, Header(alias="X-OBLIQ-Demo-Access-Token")
+    ] = None,
+) -> dict:
+    await require_firm_row(store, "applications", application_id, user.firm_id)
+    effective_application_id = application_id
+    if session_id and access_token:
+        session = await store.get_row("whatsapp_demo_sessions", session_id)
+        if (
+            session
+            and session.get("firm_id") == user.firm_id
+            and session.get("base_application_id") == application_id
+            and await verify_dashboard_access(store, settings, session_id, access_token)
+        ):
+            effective_application_id = str(session["session_application_id"])
+    collection = await get_document_collection_status(store, effective_application_id)
+    return {
+        **collection,
+        "base_application_id": application_id,
+        "effective_application_id": effective_application_id,
+    }
 
 REQUIREMENTS = {
     "sales_register": "Sales Register",
@@ -47,7 +82,8 @@ async def create_application(
             "client_id": client_id,
             "application_type": "gst_readiness",
             "status": "not_started",
-            "assigned_preparer_id": data.get("assigned_preparer_id") or client.get("assigned_preparer_id"),
+            "assigned_preparer_id": data.get("assigned_preparer_id")
+            or client.get("assigned_preparer_id"),
             "reviewer_id": data.get("reviewer_id") or client.get("reviewer_id"),
         }
     )
@@ -98,7 +134,11 @@ async def update_application(
     store: Annotated[DataStore, Depends(get_store)],
 ) -> dict:
     before = await require_firm_row(store, "applications", application_id, user.firm_id)
-    updated = await store.update_row("applications", application_id, payload.model_dump(exclude_none=True, mode="json"))
+    updated = await store.update_row(
+        "applications",
+        application_id,
+        payload.model_dump(exclude_none=True, mode="json"),
+    )
     if not updated:
         raise HTTPException(status_code=404, detail="Application not found")
     await record_audit(
@@ -123,7 +163,9 @@ async def application_checklist(
     store: Annotated[DataStore, Depends(get_store)],
 ) -> list[dict]:
     await require_firm_row(store, "applications", application_id, user.firm_id)
-    return await store.list_rows("document_requirements", {"application_id": application_id}, order="label")
+    return await store.list_rows(
+        "document_requirements", {"application_id": application_id}, order="label"
+    )
 
 
 @router.get("/dashboard/summary")
@@ -137,12 +179,22 @@ async def dashboard_summary(
     )
     missing = 0
     for application in applications:
-        requirements = await store.list_rows("document_requirements", {"application_id": application["id"]})
+        requirements = await store.list_rows(
+            "document_requirements", {"application_id": application["id"]}
+        )
         missing += sum(row.get("status") == "missing" for row in requirements)
     return {
         "total_clients": len(clients),
         "active_applications": sum(app.get("status") != "completed" for app in applications),
         "missing_documents": missing,
-        "needs_review": sum(app.get("status") in {"extraction_review", "validation_review", "reconciliation_review"} for app in applications),
-        "ready_for_filing": sum(app.get("status") in {"ready_for_ca_review", "approved", "ready_for_filing"} for app in applications),
+        "needs_review": sum(
+            app.get("status")
+            in {"extraction_review", "validation_review", "reconciliation_review"}
+            for app in applications
+        ),
+        "ready_for_filing": sum(
+            app.get("status")
+            in {"ready_for_ca_review", "approved", "ready_for_filing"}
+            for app in applications
+        ),
     }

@@ -39,6 +39,8 @@ async def test_welcome_and_status_messages_read_the_cloned_checklist() -> None:
     assert "Raj Traders" in welcome
     assert "April 2026" in welcome
     assert "Purchase Register" in welcome
+    assert "/upload/" not in welcome
+    assert "CA will send the secure upload link after review" in welcome
     assert status.action == "status"
     assert "Pending document categories" in status.text
     assert "GSTR-2B" in status.text
