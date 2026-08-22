@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDemoAccessHeaders,
+  buildDemoContextHeaders,
   isMissingDemoSessionError,
+  loadPendingWhatsAppDraft,
   loadStoredDemoSession,
+  removePendingWhatsAppDraft,
   removeStoredDemoSession,
+  savePendingWhatsAppDraft,
   saveStoredDemoSession,
 } from "./whatsapp-demo";
 import {ApiError} from "./api";
@@ -39,6 +43,31 @@ describe("WhatsApp demo browser isolation", () => {
 
     expect(headers).toEqual({"X-OBLIQ-Demo-Access-Token": "dashboard-secret"});
     expect(JSON.stringify(headers)).not.toContain("Authorization");
+  });
+
+  it("sends both session isolation headers for collection and request APIs", () => {
+    expect(buildDemoContextHeaders({
+      sessionId: "session-a",
+      dashboardAccessToken: "dashboard-secret",
+    })).toEqual({
+      "X-OBLIQ-Demo-Session-Id": "session-a",
+      "X-OBLIQ-Demo-Access-Token": "dashboard-secret",
+    });
+    expect(buildDemoContextHeaders(null)).toEqual({});
+  });
+
+  it("preserves a request draft while WhatsApp reconnects", () => {
+    const storage = new MemoryStorage();
+    savePendingWhatsAppDraft(storage, "app-a", {
+      reminderId: "reminder-a",
+      reminderType: "initial_document_request",
+      draftMessage: "Please connect WhatsApp",
+      prepared: false,
+    });
+
+    expect(loadPendingWhatsAppDraft(storage, "app-a")?.reminderId).toBe("reminder-a");
+    removePendingWhatsAppDraft(storage, "app-a");
+    expect(loadPendingWhatsAppDraft(storage, "app-a")).toBeNull();
   });
 
   it("removes only the stale application session and preserves login state", () => {

@@ -1,29 +1,84 @@
 "use client";
 
-import { FileJson2, FileSearch, RefreshCw, Upload, X } from "lucide-react";
-import { useEffect, useState } from "react";
-import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Field, Select, Textarea } from "@/components/ui/field";
-import { apiFetch, resolveAssetUrl } from "@/lib/api";
-import { formatDate } from "@/lib/format";
-import type { DocumentRecord, Extraction, Requirement } from "@/lib/types";
+import {FileJson2} from "lucide-react";
+import {useCallback, useEffect, useState} from "react";
+import {toast} from "sonner";
+import {apiFetch} from "../../lib/api";
+import {formatDate, formatStatus} from "../../lib/format";
+import type {DocumentRecord, Requirement} from "../../lib/types";
+import {Badge} from "../ui/badge";
+import {Card} from "../ui/card";
 
-export function DocumentPanel({ applicationId, checklist, onChanged }: { applicationId: string; checklist: Requirement[]; onChanged: () => void }) {
-  const [documents,setDocuments]=useState<DocumentRecord[]>([]); const [busy,setBusy]=useState(false); const [requirement,setRequirement]=useState("purchase_invoice"); const [selected,setSelected]=useState<DocumentRecord|null>(null); const [extraction,setExtraction]=useState<Extraction|null>(null); const [json,setJson]=useState("");
-  async function load(){setDocuments(await apiFetch<DocumentRecord[]>(`/applications/${applicationId}/documents`))}
-  useEffect(()=>{load().catch(e=>toast.error(e.message))},[applicationId]);
-  async function upload(file:File){setBusy(true);try{const data=new FormData();data.append("file",file);data.append("requirement_type",requirement);await apiFetch(`/applications/${applicationId}/documents`,{method:"POST",body:data});toast.success("Document uploaded and processed");await load();onChanged();}catch(error){toast.error(error instanceof Error?error.message:"Upload failed")}finally{setBusy(false)}}
-  async function openDocument(doc:DocumentRecord){setSelected(doc);setExtraction(null);try{const [withUrl,ext]=await Promise.all([apiFetch<DocumentRecord>(`/documents/${doc.id}`),apiFetch<Extraction>(`/documents/${doc.id}/extraction`)]);setSelected(withUrl);setExtraction(ext);setJson(JSON.stringify(ext.structured_data,null,2));}catch(error){toast.error(error instanceof Error?error.message:"Unable to open extraction")}}
-  async function process(doc:DocumentRecord){setBusy(true);try{await apiFetch(`/documents/${doc.id}/process`,{method:"POST"});toast.success("Document processed");await load();}catch(error){toast.error(error instanceof Error?error.message:"Processing failed")}finally{setBusy(false)}}
-  async function approve(){if(!selected)return;setBusy(true);try{await apiFetch(`/documents/${selected.id}/approve`,{method:"POST",body:JSON.stringify({notes:"Verified in OBLIQ review workspace"})});toast.success("Extraction approved");setSelected(null);await load();onChanged();}catch(error){toast.error(error instanceof Error?error.message:"Approval failed")}finally{setBusy(false)}}
-  async function saveEdit(){if(!selected)return;let parsed;try{parsed=JSON.parse(json)}catch{return toast.error("Extracted data must be valid JSON")};setBusy(true);try{await apiFetch(`/documents/${selected.id}/extraction`,{method:"PATCH",body:JSON.stringify({structured_data:parsed,review_notes:"CA corrected extracted fields"})});toast.success("Corrections saved and approved");setSelected(null);await load();onChanged();}catch(error){toast.error(error instanceof Error?error.message:"Save failed")}finally{setBusy(false)}}
-  async function reject(){if(!selected)return;setBusy(true);try{await apiFetch(`/documents/${selected.id}/reject`,{method:"POST",body:JSON.stringify({notes:"Document is unclear or does not belong to this GST period"})});toast.success("Extraction rejected");setSelected(null);await load();onChanged();}catch(error){toast.error(error instanceof Error?error.message:"Reject failed")}finally{setBusy(false)}}
-  return <div className="grid gap-5 xl:grid-cols-[.72fr_1.28fr]">
-    <div className="grid content-start gap-5"><Card className="p-5"><h3 className="font-bold">Upload from CA dashboard</h3><p className="mt-2 text-xs leading-5 text-[#77716e]">Files are parsed immediately and placed in the human review queue.</p><div className="mt-5 grid gap-3"><Field label="Document category"><Select value={requirement} onChange={e=>setRequirement(e.target.value)}>{checklist.map(item=><option key={item.requirement_type} value={item.requirement_type}>{item.label}</option>)}</Select></Field><label className={`flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-[#cfc9c3] bg-[#faf9f7] text-sm font-semibold ${busy?"opacity-50":""}`}><Upload size={20} className="mb-2"/>{busy?"Processing document…":"Choose PDF, image, CSV, XLSX or JSON"}<input type="file" className="hidden" disabled={busy} accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx,.json" onChange={e=>{const file=e.target.files?.[0];if(file)upload(file);e.target.value=""}}/></label></div></Card>
-    <Card className="overflow-hidden"><div className="border-b border-[#eeeae6] p-5"><h3 className="font-bold">Received documents</h3><p className="mt-1 text-xs text-[#77716e]">{documents.length} files in this GST period</p></div><div className="divide-y divide-[#eeeae6]">{documents.map(doc=><div key={doc.id} className="p-4"><div className="flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#e8f1fa]"><FileJson2 size={17}/></span><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{doc.original_name}</p><p className="mt-1 text-xs text-[#77716e]">{doc.document_type.replaceAll("_"," ")} · {formatDate(doc.created_at)}</p></div><Badge value={doc.processing_status}/></div><div className="mt-3 flex justify-end gap-2"><Button variant="ghost" className="min-h-8 px-3 py-1 text-xs" onClick={()=>process(doc)} disabled={busy}><RefreshCw size={14}/>Reprocess</Button><Button variant="secondary" className="min-h-8 px-3 py-1 text-xs" onClick={()=>openDocument(doc)}><FileSearch size={14}/>Review</Button></div></div>)}{!documents.length&&<div className="p-8 text-center text-sm text-[#77716e]">No files uploaded yet.</div>}</div></Card></div>
-    <Card className="min-h-[600px] overflow-hidden"><div className="border-b border-[#eeeae6] p-5"><h3 className="font-bold">Original and extracted data</h3><p className="mt-1 text-xs text-[#77716e]">Select a document to compare the original with the structured result.</p></div>{selected&&extraction?<div className="grid min-h-[540px] lg:grid-cols-2"><div className="border-b border-[#eeeae6] bg-[#f5f4f2] p-3 lg:border-b-0 lg:border-r"><div className="mb-3 flex items-center justify-between"><span className="truncate text-xs font-semibold">{selected.original_name}</span><button onClick={()=>setSelected(null)} className="rounded-full p-1"><X size={17}/></button></div>{selected.signed_url?<iframe title="Original document" src={resolveAssetUrl(selected.signed_url)} className="h-[470px] w-full rounded-xl bg-white"/>:<div className="grid h-[470px] place-items-center text-sm text-[#77716e]">Preview unavailable</div>}</div><div className="p-4"><div className="mb-4 flex items-center justify-between"><div><Badge value={extraction.review_status}/><p className="mt-2 text-xs text-[#77716e]">Provider: {extraction.provider} · Confidence {Math.round((extraction.overall_confidence||0)*100)}%</p></div></div><Textarea className="h-[360px] w-full font-mono text-xs" value={json} onChange={e=>setJson(e.target.value)}/><div className="mt-4 flex flex-wrap gap-2"><Button onClick={approve} disabled={busy}>Approve</Button><Button variant="secondary" onClick={saveEdit} disabled={busy}>Save edits & approve</Button><Button variant="danger" onClick={reject} disabled={busy}>Reject</Button></div></div></div>:<div className="grid min-h-[540px] place-items-center p-8 text-center text-sm text-[#77716e]"><div><FileSearch size={36} className="mx-auto mb-4 opacity-40"/>Choose a document from the left to review its extracted fields.</div></div>}</Card>
+type Props = {
+  applicationId: string;
+  checklist: Requirement[];
+  onChanged: () => void;
+};
+
+export function DocumentPanel({applicationId, checklist}: Props) {
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const fetchDocuments = useCallback(
+    () => apiFetch<DocumentRecord[]>(`/applications/${applicationId}/documents`),
+    [applicationId],
+  );
+
+  useEffect(() => {
+    let active = true;
+    const refresh = () => fetchDocuments()
+      .then(rows => {
+        if (active) setDocuments(rows);
+      })
+      .catch(error => {
+        if (active) toast.error(error instanceof Error ? error.message : "Unable to load documents");
+      });
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 3000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [fetchDocuments]);
+
+  const labels = new Map(checklist.map(item => [item.id, item.label]));
+
+  return <div className="grid gap-6">
+    <Card className="border-blue-200 bg-blue-50 p-5">
+      <h2 className="font-bold text-blue-950">Uploaded documents</h2>
+      <p className="mt-2 text-sm leading-6 text-blue-900">
+        Phase 2 stores original files securely and marks the matching checklist category as received.
+        Uploaded files remain <strong>Awaiting processing</strong> until a later implementation phase.
+      </p>
+    </Card>
+    <Card className="overflow-hidden">
+      <div className="border-b border-[#eeeae6] p-5">
+        <h3 className="font-bold">Private Storage intake</h3>
+        <p className="mt-1 text-xs text-[#77716e]">{documents.length} files stored for this GST application</p>
+      </div>
+      <div className="divide-y divide-[#eeeae6]">
+        {documents.map(document => <div key={document.id} className="flex flex-wrap items-start gap-3 p-5">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e8f1fa]">
+            <FileJson2 size={18}/>
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold">{document.original_name}</p>
+            <p className="mt-1 text-xs text-[#77716e]">
+              {document.requirement_id ? labels.get(document.requirement_id) ?? "Checklist document" : "Checklist document"}
+              {" · "}{formatDate(document.created_at)}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge value="stored"/>
+            <Badge value={document.processing_status || "awaiting_processing"}/>
+          </div>
+        </div>)}
+        {!documents.length && <div className="p-10 text-center text-sm text-[#77716e]">
+          No files uploaded through the secure client link yet.
+        </div>}
+      </div>
+      <div className="border-t border-[#eeeae6] bg-[#faf9f7] px-5 py-3 text-xs text-[#77716e]">
+        Extraction, validation, reconciliation, and document-content review are not enabled in Phase 2.
+        Current status: {formatStatus("awaiting_processing")}.
+      </div>
+    </Card>
   </div>;
 }

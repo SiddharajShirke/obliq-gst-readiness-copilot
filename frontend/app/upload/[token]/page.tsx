@@ -1,16 +1,92 @@
 "use client";
 
-import { useParams } from "next/navigation";
-import { Check, FileUp, ShieldCheck } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
-import { Loading } from "@/components/ui/loading";
-import { apiFetch } from "@/lib/api";
-import { formatDate } from "@/lib/format";
-import type { Client,GSTApplication,Requirement } from "@/lib/types";
+import {useParams} from "next/navigation";
+import {useCallback, useEffect, useState} from "react";
+import {toast} from "sonner";
+import {
+  SecureUploadView,
+  type UploadTransientState,
+} from "@/components/documents/secure-upload-view";
+import {Loading} from "@/components/ui/loading";
+import {ApiError, apiFetch} from "@/lib/api";
+import type {PublicUploadContext, PublicUploadRequirement} from "@/lib/types";
 
-type Context={firm:{name:string};client:Client;application:GSTApplication;checklist:Requirement[]};
+export default function SecureUploadPage() {
+  const {token} = useParams<{token: string}>();
+  const [context, setContext] = useState<PublicUploadContext | null>(null);
+  const [fatalError, setFatalError] = useState<string | null>(null);
+  const [busyRequirementId, setBusyRequirementId] = useState<string | null>(null);
+  const [transientStates, setTransientStates] = useState<Record<string, UploadTransientState>>({});
 
-export default function SecureUploadPage(){const {token}=useParams<{token:string}>();const [context,setContext]=useState<Context|null>(null);const [busy,setBusy]=useState<string|null>(null);const load=useCallback(()=>apiFetch<Context>(`/public/upload/${token}`,{},false).then(setContext),[token]);useEffect(()=>{load().catch(e=>toast.error(e.message))},[load]);async function upload(requirement:Requirement,file:File){setBusy(requirement.id);try{const data=new FormData();data.append("file",file);data.append("requirement_type",requirement.requirement_type);await apiFetch(`/public/upload/${token}`,{method:"POST",body:data},false);toast.success(`${requirement.label} received`);await load();}catch(error){toast.error(error instanceof Error?error.message:"Upload failed")}finally{setBusy(null)}}if(!context)return <main className="min-h-screen bg-[#e8f1fa]"><Loading label="Verifying secure upload link…"/></main>;const complete=context.checklist.every(item=>item.status!=="missing");return <main className="min-h-screen bg-[#e8f1fa] p-4 sm:p-8"><div className="mx-auto max-w-3xl"><header className="flex items-center justify-between py-3"><span className="text-xl font-black tracking-[-.06em]">OBLIQ</span><span className="flex items-center gap-2 text-xs font-semibold"><ShieldCheck size={16}/>Secure client upload</span></header><Card className="mt-5 overflow-hidden shadow-[0_25px_80px_rgba(25,21,21,.10)]"><div className="bg-[#191515] p-6 text-white sm:p-8"><p className="text-xs font-bold tracking-[.13em] text-[#a4c5e5]">{context.firm?.name}</p><h1 className="mt-3 text-3xl font-bold tracking-[-.04em]">{context.client.business_name}</h1><p className="mt-2 text-sm text-white/65">{context.application.period_label} GST documents · Due {formatDate(context.application.due_date)}</p></div><div className="p-5 sm:p-8"><p className="text-sm leading-6 text-[#625d5a]">Upload each requested category below. Files are visible only to the CA firm handling this GST period.</p><div className="mt-6 grid gap-3">{context.checklist.map(item=><div key={item.id} className="flex flex-col justify-between gap-4 rounded-2xl border border-[#e5e2de] p-4 sm:flex-row sm:items-center"><div className="flex items-center gap-3"><span className={`grid h-9 w-9 place-items-center rounded-full ${item.status==="missing"?"bg-[#f8f7f5] text-[#77716e]":"bg-emerald-50 text-emerald-700"}`}>{item.status==="missing"?<FileUp size={17}/>:<Check size={17}/>}</span><div><strong className="text-sm">{item.label}</strong><div className="mt-1"><Badge value={item.status}/></div></div></div><label className={`cursor-pointer rounded-full px-5 py-2.5 text-center text-sm font-semibold ${item.status==="missing"?"bg-[#191515] text-white":"border border-[#dcd7d2] bg-white"}`}>{busy===item.id?"Processing…":item.status==="missing"?"Upload document":"Upload another"}<input type="file" className="hidden" disabled={Boolean(busy)} accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx,.json" onChange={e=>{const file=e.target.files?.[0];if(file)upload(item,file);e.target.value=""}}/></label></div>)}</div>{complete&&<div className="mt-6 rounded-2xl bg-emerald-50 p-5 text-sm text-emerald-800"><div className="flex items-center gap-2 font-bold"><Check size={18}/>All required categories received</div><p className="mt-2 leading-6">The CA firm can now review the extracted information. You may still replace or add a clearer document.</p></div>}</div></Card><p className="mx-auto mt-5 max-w-xl text-center text-xs leading-5 text-[#6b6562]">This prototype uses synthetic demonstration information. Never upload real taxpayer data to a public demo environment.</p></div></main>}
+  const fetchContext = useCallback(async (statusOnly = false) => {
+    const suffix = statusOnly ? "/status" : "";
+    return apiFetch<PublicUploadContext>(`/public/upload/${token}${suffix}`, {}, false);
+  }, [token]);
+
+  useEffect(() => {
+    let active = true;
+    fetchContext()
+      .then(nextContext => {
+        if (active) {
+          setContext(nextContext);
+          setFatalError(null);
+        }
+      })
+      .catch(error => {
+        if (active) setFatalError(error instanceof Error ? error.message : "This upload link is unavailable");
+      });
+    const timer = window.setInterval(() => {
+      fetchContext(true).then(nextContext => {
+        if (active) setContext(nextContext);
+      }).catch(() => undefined);
+    }, 2500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [fetchContext]);
+
+  async function upload(requirement: PublicUploadRequirement, file: File) {
+    setBusyRequirementId(requirement.id);
+    setTransientStates(current => ({...current, [requirement.id]: "uploading"}));
+    try {
+      const data = new FormData();
+      data.append("file", file);
+      data.append("requirement_id", requirement.id);
+      await apiFetch(`/public/upload/${token}`, {method: "POST", body: data}, false);
+      setTransientStates(current => {
+        const next = {...current};
+        delete next[requirement.id];
+        return next;
+      });
+      toast.success(`${requirement.label} uploaded securely`);
+      setContext(await fetchContext(true));
+      setFatalError(null);
+    } catch (error) {
+      const state: UploadTransientState = error instanceof ApiError && error.status === 409
+        ? "duplicate"
+        : "failed";
+      setTransientStates(current => ({...current, [requirement.id]: state}));
+      toast.error(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      setBusyRequirementId(null);
+    }
+  }
+
+  if (fatalError) {
+    return <main className="grid min-h-screen place-items-center bg-[#e8f1fa] p-6">
+      <div className="max-w-lg rounded-3xl bg-white p-8 text-center shadow-xl">
+        <h1 className="text-xl font-bold">Secure upload link unavailable</h1>
+        <p className="mt-3 text-sm leading-6 text-[#625d5a]">{fatalError}</p>
+        <p className="mt-3 text-xs text-[#77716e]">Ask the CA firm for a new upload link.</p>
+      </div>
+    </main>;
+  }
+  if (!context) return <main className="min-h-screen bg-[#e8f1fa]"><Loading label="Verifying secure upload link…"/></main>;
+  return <SecureUploadView
+    context={context}
+    busyRequirementId={busyRequirementId}
+    transientStates={transientStates}
+    onUpload={upload}
+  />;
+}

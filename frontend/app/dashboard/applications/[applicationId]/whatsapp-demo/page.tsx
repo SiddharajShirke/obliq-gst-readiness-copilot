@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import {useParams} from "next/navigation";
+import {useParams, useRouter} from "next/navigation";
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {ArrowLeft} from "lucide-react";
 import {toast} from "sonner";
@@ -11,10 +11,13 @@ import {WhatsAppDemoView} from "@/components/whatsapp/whatsapp-demo-view";
 import {apiFetch} from "@/lib/api";
 import {
   buildDemoAccessHeaders,
+  buildDemoContextHeaders,
   isMissingDemoSessionError,
+  loadPendingWhatsAppDraft,
   loadStoredDemoSession,
   removeStoredDemoSession,
   saveStoredDemoSession,
+  savePendingWhatsAppDraft,
   type StoredDemoSession,
   type WhatsAppDemoCreated,
   type WhatsAppDemoStatus,
@@ -22,7 +25,9 @@ import {
 
 export default function WhatsAppDemoPage() {
   const {applicationId} = useParams<{applicationId: string}>();
+  const router = useRouter();
   const initialized = useRef(false);
+  const preparingDraft = useRef(false);
   const [stored, setStored] = useState<StoredDemoSession | null>(null);
   const [created, setCreated] = useState<WhatsAppDemoCreated | null>(null);
   const [sessionStatus, setSessionStatus] = useState<WhatsAppDemoStatus | null>(null);
@@ -37,6 +42,23 @@ export default function WhatsAppDemoPage() {
     );
     setSessionStatus(value);
   }, []);
+
+  const createSession = useCallback(async () => {
+    const response = await apiFetch<WhatsAppDemoCreated>(
+      `/applications/${applicationId}/whatsapp-demo-sessions`,
+      {method: "POST"},
+    );
+    const next = {
+      sessionId: response.session_id,
+      dashboardAccessToken: response.dashboard_access_token,
+      created: response,
+    };
+    saveStoredDemoSession(window.sessionStorage, applicationId, next);
+    setStored(next);
+    setCreated(response);
+    await poll(next);
+    return next;
+  }, [applicationId, poll]);
 
   useEffect(() => {
     if (initialized.current || typeof window === "undefined") return;
@@ -57,28 +79,51 @@ export default function WhatsAppDemoPage() {
           setSessionStatus(null);
         }
       }
-      const response = await apiFetch<WhatsAppDemoCreated>(
-        `/applications/${applicationId}/whatsapp-demo-sessions`,
-        {method: "POST"},
-      );
-      const next = {
-        sessionId: response.session_id,
-        dashboardAccessToken: response.dashboard_access_token,
-        created: response,
-      };
-      saveStoredDemoSession(window.sessionStorage, applicationId, next);
-      setStored(next);
-      setCreated(response);
-      await poll(next);
+      await createSession();
     };
     start().catch(cause => setError(cause instanceof Error ? cause.message : "Unable to create session"));
-  }, [applicationId, poll]);
+  }, [applicationId, createSession, poll]);
 
   useEffect(() => {
     if (!stored) return;
     const timer = window.setInterval(() => poll(stored).catch(() => undefined), 2500);
     return () => window.clearInterval(timer);
   }, [poll, stored]);
+
+  useEffect(() => {
+    if (
+      !stored
+      || sessionStatus?.status !== "active"
+      || preparingDraft.current
+      || typeof window === "undefined"
+    ) return;
+    const pending = loadPendingWhatsAppDraft(window.sessionStorage, applicationId);
+    if (!pending || pending.prepared) return;
+    preparingDraft.current = true;
+    apiFetch<{
+      draft_message: string;
+      reminder_needed: boolean;
+      message?: string;
+    }>(`/reminders/${pending.reminderId}/prepare`, {
+      method: "POST",
+      headers: buildDemoContextHeaders(stored),
+    }).then(prepared => {
+      if (!prepared.reminder_needed) {
+        window.sessionStorage.removeItem(`obliq_whatsapp_pending_draft:${applicationId}`);
+        toast.success(prepared.message ?? "No reminder is needed");
+      } else {
+        savePendingWhatsAppDraft(window.sessionStorage, applicationId, {
+          ...pending,
+          draftMessage: prepared.draft_message,
+          prepared: true,
+        });
+      }
+      router.push(`/dashboard/applications/${applicationId}`);
+    }).catch(cause => {
+      preparingDraft.current = false;
+      toast.error(cause instanceof Error ? cause.message : "Unable to prepare request");
+    });
+  }, [applicationId, router, sessionStatus?.status, stored]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -129,6 +174,41 @@ export default function WhatsAppDemoPage() {
     }
   }
 
+  async function reconnect() {
+    if (!stored || !created) return;
+    setBusy(true);
+    try {
+      const regenerated = await apiFetch<Pick<
+        WhatsAppDemoCreated,
+        "session_id" | "status" | "start_message" | "start_whatsapp_url" | "token_expires_at" | "session_expires_at"
+      >>(`/whatsapp-demo-sessions/${stored.sessionId}/reconnect`, {
+        method: "POST",
+        headers: buildDemoAccessHeaders(stored.dashboardAccessToken),
+      });
+      const nextCreated = {...created, ...regenerated};
+      const nextStored = {...stored, created: nextCreated};
+      saveStoredDemoSession(window.sessionStorage, applicationId, nextStored);
+      setStored(nextStored);
+      setCreated(nextCreated);
+      setSessionStatus(null);
+      await poll(nextStored);
+      toast.success("New single-use START token generated for the retained session");
+    } catch (cause) {
+      if (isMissingDemoSessionError(cause)) {
+        removeStoredDemoSession(window.sessionStorage, applicationId);
+        setStored(null);
+        setCreated(null);
+        setSessionStatus(null);
+        await createSession();
+        toast.success("Retained data was unavailable, so a new isolated session was created");
+      } else {
+        toast.error(cause instanceof Error ? cause.message : "Unable to reconnect WhatsApp");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function copy(value: string) {
     await navigator.clipboard.writeText(value);
     toast.success("Copied to clipboard");
@@ -143,6 +223,6 @@ export default function WhatsAppDemoPage() {
       description={`GST Period: ${created.gst_period}`}
       actions={<Link href={`/dashboard/applications/${applicationId}`} className="inline-flex items-center gap-2 rounded-full border border-[#dcd7d2] bg-white px-5 py-3 text-sm font-semibold"><ArrowLeft size={17}/>GST workspace</Link>}
     />
-    <WhatsAppDemoView created={created} status={sessionStatus} countdown={countdown} busy={busy} onCopy={copy} onRegenerate={regenerate} onCancel={cancel}/>
+    <WhatsAppDemoView created={created} status={sessionStatus} countdown={countdown} busy={busy} onCopy={copy} onRegenerate={regenerate} onCancel={cancel} onReconnect={reconnect}/>
   </>;
 }

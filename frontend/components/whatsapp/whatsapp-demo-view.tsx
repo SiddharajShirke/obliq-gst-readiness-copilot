@@ -16,6 +16,7 @@ type Props = {
   onCopy: (value: string) => void;
   onRegenerate: () => void;
   onCancel: () => void;
+  onReconnect?: () => void;
 };
 
 function QrAction({value, label}: {value: string; label: string}) {
@@ -35,7 +36,7 @@ function CopyValue({value, onCopy}: {value: string; onCopy: (value: string) => v
   </div>;
 }
 
-export function WhatsAppDemoView({created, status, countdown, busy, onCopy, onRegenerate, onCancel}: Props) {
+export function WhatsAppDemoView({created, status, countdown, busy, onCopy, onRegenerate, onCancel, onReconnect}: Props) {
   const currentStatus = status?.status ?? created.status;
   return <>
     <Card className="mb-6 border-amber-200 bg-amber-50 p-5 text-sm leading-6 text-amber-900">
@@ -86,11 +87,22 @@ export function WhatsAppDemoView({created, status, countdown, busy, onCopy, onRe
       <div className="mt-6 border-t border-[#eeeae6] pt-5">
         <div className="flex items-center gap-2"><MessageCircleMore size={18}/><h3 className="font-bold">Cloned GST checklist</h3></div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          {(status?.checklist ?? []).map(item => <div key={item.id} className="flex items-center justify-between rounded-2xl border border-[#e5e2de] p-4"><span className="text-sm font-semibold">{item.label}</span><Badge value={item.status}/></div>)}
+          {(status?.checklist ?? []).map(item => <div key={item.id} className="flex items-center justify-between gap-3 rounded-2xl border border-[#e5e2de] p-4">
+            <span className="text-sm font-semibold">{item.label}</span>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Badge value={item.status}/>
+              {item.upload_status === "uploaded" && <Badge value="uploaded"/>}
+              {item.processing_status && <Badge value={item.processing_status}/>}
+            </div>
+          </div>)}
           {!status?.checklist.length && <p className="text-sm text-[#77716e]">Checklist appears after the session is created.</p>}
         </div>
       </div>
       <div className="mt-6 flex items-start gap-3 rounded-2xl bg-[#e8f1fa] p-4 text-sm leading-6 text-[#315d82]"><ShieldCheck className="mt-0.5 shrink-0" size={19}/>Only masked phone digits and live Vonage delivery status are shown. The browser never receives Vonage credentials, signature secrets, or encryption keys.</div>
+      {onReconnect && ["cancelled", "expired"].includes(currentStatus) && <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+        <p className="text-sm text-amber-900">Reconnect explicitly to keep the same retained checklist and uploads. A new single-use START token will be generated.</p>
+        <Button className="mt-3" onClick={onReconnect} disabled={busy}><RefreshCw size={16}/>Reconnect WhatsApp</Button>
+      </div>}
     </Card>
   </>;
 }

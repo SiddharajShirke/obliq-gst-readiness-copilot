@@ -48,6 +48,24 @@ export type Requirement = {
   created_at?: string;
 };
 
+export type PublicUploadRequirement = {
+  id: string;
+  label: string;
+  required: boolean;
+  status: string;
+  upload_status: "pending" | "uploaded";
+  processing_status: string | null;
+};
+
+export type PublicUploadContext = {
+  firm: {name: string};
+  client: {business_name: string};
+  application: {period_label: string; due_date?: string | null};
+  checklist: PublicUploadRequirement[];
+  allowed_extensions: string[];
+  maximum_size_mb: number;
+};
+
 export type DocumentRecord = {
   id: string;
   application_id: string;
@@ -55,7 +73,7 @@ export type DocumentRecord = {
   original_name: string;
   mime_type?: string;
   file_size?: number;
-  document_type: string;
+  document_type?: string | null;
   processing_status: string;
   source: string;
   created_at: string;
@@ -111,6 +129,26 @@ export type Reminder = {
   status: string;
   upload_url?: string;
   provider?: string;
+  reminder_type?: "initial_document_request" | "missing_document_reminder";
+  reminder_needed?: boolean;
+  requires_connection?: boolean;
+  message?: string;
+  demo_session_id?: string | null;
+};
+
+export type DocumentCollectionStatus = {
+  required_count: number;
+  received_count: number;
+  missing_count: number;
+  progress_percent: number;
+  workflow_status:
+    | "not_started"
+    | "documents_requested"
+    | "partially_received"
+    | "documents_complete";
+  requirements: Requirement[];
+  base_application_id: string;
+  effective_application_id: string;
 };
 
 export type Citation = {

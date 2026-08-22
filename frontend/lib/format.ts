@@ -23,10 +23,10 @@ export function formatStatus(value?: string | null): string {
 
 export function statusTone(value?: string | null): StatusTone {
   const status = value || "";
-  if (["completed", "approved", "ready_for_filing", "ready_for_ca_review", "received", "resolved", "matched", "sent", "delivered", "read"].includes(status)) return "success";
-  if (["partially_received", "documents_requested", "awaiting_approval", "purchase_only", "gstr2b_only", "date_mismatch"].includes(status)) return "warning";
-  if (["failed", "rejected", "missing", "amount_mismatch", "wrong_period", "unreadable_document", "cancelled"].includes(status)) return "danger";
-  if (["processing", "extraction_review", "validation_review", "reconciliation_review", "documents_complete"].includes(status)) return "info";
+  if (["completed", "approved", "ready_for_filing", "ready_for_ca_review", "received", "resolved", "matched", "sent", "delivered", "read", "uploaded", "stored"].includes(status)) return "success";
+  if (["partially_received", "documents_requested", "awaiting_approval", "purchase_only", "gstr2b_only", "date_mismatch", "duplicate"].includes(status)) return "warning";
+  if (["failed", "rejected", "missing", "amount_mismatch", "wrong_period", "unreadable_document", "cancelled", "upload_failed"].includes(status)) return "danger";
+  if (["processing", "uploading", "awaiting_processing", "extraction_review", "validation_review", "reconciliation_review", "documents_complete"].includes(status)) return "info";
   return "neutral";
 }
 
