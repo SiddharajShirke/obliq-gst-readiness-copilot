@@ -67,7 +67,9 @@ The Phase 1 walkthrough supports one judge at a time:
 3. Scan the unique OBLIQ START QR and send the START message.
 4. Confirm the signed inbound webhook returns HTTP 200 and the judge receives the checklist.
 5. Send `STATUS` and `HELP`; confirm each response and its status callback.
-6. Send an attachment; confirm OBLIQ acknowledges it but creates no document row.
+6. Open the secure browser link included in the welcome message and upload one synthetic GST file.
+7. Confirm the private Storage object, `secure_link` document row, cloned checklist update, and `awaiting_processing` status.
+8. Send a direct WhatsApp attachment; confirm OBLIQ does not download it, creates no document row, and points back to the secure link.
 
 Vonage may forward the configured allow-list message to the inbound webhook in
 addition to sending its own Sandbox confirmation. OBLIQ validates that webhook
@@ -76,4 +78,4 @@ sending a second application reply.
 
 The Sandbox is free for exploration but limited to 100 messages per month across supported channels and one message per second. It is not a production or sustained QA environment. A production deployment requires a proper WhatsApp Business Account and production Vonage Messages API setup.
 
-Phase 1 implements real text transport, inbound webhook validation, isolated OBLIQ sessions, and delivery-status tracking. WhatsApp media download, Supabase document storage, OCR, AI extraction, checklist mutation from attachments, and dashboard document display remain deferred.
+Phase 1 implements real text transport, inbound webhook validation, isolated OBLIQ sessions, and delivery-status tracking. Phase 2 adds private Supabase Storage intake through a session-bound browser link and live cloned-checklist status. Direct WhatsApp media download, OCR, AI extraction, checklist mutation from attachments, and document-content viewer changes remain deferred.

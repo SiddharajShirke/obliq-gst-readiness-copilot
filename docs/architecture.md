@@ -26,6 +26,7 @@ FastAPI exposes:
 - `GET /api/v1/whatsapp-demo-sessions/{session_id}`
 - `POST /api/v1/whatsapp-demo-sessions/{session_id}/cancel`
 - `POST /api/v1/whatsapp-demo-sessions/{session_id}/regenerate-start-token`
+- `POST /api/v1/whatsapp-demo-sessions/{session_id}/reconnect`
 - `POST /api/v1/webhooks/vonage/whatsapp`
 - `POST /api/v1/webhooks/vonage/status`
 - `GET /api/v1/integrations/whatsapp/status`
@@ -40,6 +41,24 @@ The browser never accesses session tables directly. Status, cancellation, and re
 
 Phone data is HMAC-SHA256 indexed, Fernet encrypted, masked for display, anonymized at expiry, and removed with temporary session data after retention. No raw full phone is written to ordinary logs or API responses.
 
-Media URLs are not fetched. Phase 1 stores only media count/content-type metadata and sends a controlled response.
+Media URLs are not fetched. Direct Vonage attachments store only sanitized metadata and receive a controlled response directing the sender to the secure browser link.
+
+## Phase 2 secure upload boundary
+
+The existing FastAPI multipart route is the only anonymous document-intake path. It validates the HMAC-protected upload token, resolves immutable scope from PostgreSQL, validates the selected requirement against the cloned checklist, reads a bounded request body, checks extension/MIME/signature/content, sanitizes the filename, and rejects duplicate SHA-256 values within the same application.
+
+The service role is used only after token and scope validation. FastAPI chooses the private `gst-documents` bucket and an immutable path:
+
+```text
+firm_id/client_id/demo_session_id/session_application_id/document_id/safe_filename
+```
+
+Normal application links omit `demo_session_id`. The `complete_secure_document_upload` RPC locks and verifies application, requirement, and active demo-session scope; inserts document metadata; marks exactly one requirement received; and updates only the linked application/session. Normal browser and session status use controlled polling.
+
+Phase 2 ends at `processing_status = awaiting_processing`. Existing OCR, extraction, validation, reconciliation, document viewer, and RAG workflows remain separate and are not automatically invoked by anonymous intake.
+
+The checklist-backed collection service is the canonical source for workspace progress, request/reminder content, and WhatsApp `STATUS`. A request is drafted before connection when necessary, retained in browser session state, prepared with a clone-bound secure link after START activation, reviewed by the CA, and then sent to the session-bound encrypted phone. Reminders query only the current missing rows and reuse the same active Vonage session.
+
+Expired or cancelled sessions are reconnected only after the authenticated user presses **Reconnect WhatsApp**. During the existing 24-hour retention window, the backend preserves the session UUID, cloned application, requirements, documents, and dashboard-access hash; clears the prior phone binding; and issues a fresh single-use START token and new expiry. If cleanup has already deleted the retained data, the frontend creates a normal new isolated session instead.
 
 Existing private Storage signed URLs, OCR and document parsers, Gemini/Groq adapters, hybrid `pgvector`/full-text retrieval, firm-specific knowledge isolation, validation, reconciliation, exports, and document viewers are outside this migration and retain their existing design.

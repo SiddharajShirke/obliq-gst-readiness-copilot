@@ -20,6 +20,8 @@ Generate peppers and a Fernet key:
 .\.venv\Scripts\python.exe -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
+Use the random-token command independently for `UPLOAD_TOKEN_PEPPER`, `WHATSAPP_DEMO_TOKEN_PEPPER`, and `WHATSAPP_PHONE_HASH_PEPPER`. Use the Fernet command only for `WHATSAPP_PHONE_ENCRYPTION_KEY`.
+
 Start FastAPI and Next.js in separate terminals:
 
 ```powershell
@@ -46,7 +48,7 @@ Run cleanup manually when needed:
 .\.venv\Scripts\python.exe scripts\cleanup_vonage_demo_sessions.py
 ```
 
-There is no scheduled cleanup worker in Phase 1. Expiration also runs opportunistically during session creation, status retrieval, and inbound webhook processing.
+There is no scheduled cleanup worker. Expiration also runs opportunistically during session creation, status retrieval, and inbound webhook processing. After the configured retention window, cleanup removes session-scoped secure-upload objects, document metadata, cloned requirements/application, links, messages, and the demo-session row while preserving the base application.
 
 ## Local Supabase mode
 
@@ -61,7 +63,11 @@ supabase db reset
 
 Copy the local Supabase values into `.env`, set `USE_IN_MEMORY_DB=false`, and keep the service-role key only in the backend environment. For direct Next.js development, copy `frontend/.env.local.example` to `frontend/.env.local`; only public Supabase values belong there.
 
-For a hosted project, apply all migrations through the Supabase CLI or SQL Editor, including `202608200001_supabase_backend_runtime_grants.sql`, before running the seed command. If `DATABASE_URL` contains reserved characters such as `@` in its password, URL-encode them or use the exact Supabase pooler connection string; otherwise PostgreSQL clients may parse part of the password as the hostname.
+`supabase db reset` destroys and rebuilds only the local database. It applies `202608220001_secure_gst_document_intake.sql`, including the secure-link scope, document metadata, private-bucket assertion, indexes, and atomic finalization RPC. Do not use `--linked` for this local verification.
+
+For a linked hosted project, inspect pending migrations with `supabase db push --dry-run`, then apply them with `supabase db push`. This is forward-only; do not reset a hosted database. Apply all migrations, including `202608200001_supabase_backend_runtime_grants.sql` and `202608220001_secure_gst_document_intake.sql`, before testing the upload link. If `DATABASE_URL` contains reserved characters such as `@` in its password, URL-encode them or use the exact Supabase pooler connection string; otherwise PostgreSQL clients may parse part of the password as the hostname.
+
+For Phase 2, keep `FRONTEND_URL=http://localhost:3000` locally when the phone can reach that origin. CA-approved document requests use this value to build the secure browser URL; deployed or cross-device environments must use a frontend origin reachable from the WhatsApp device.
 
 When using Supabase Auth, set `NEXT_PUBLIC_DEMO_MODE=false` in both the root environment and `frontend/.env.local`. The frontend then treats the Supabase SDK session as the only authentication authority and hides fake-token role buttons.
 

@@ -6,13 +6,16 @@ For hosted Supabase, apply migrations in order, verify the existing private Stor
 
 For Render or Railway, use the existing backend Dockerfile, expose port 8000, and retain `/api/v1/health` as the health check. For Vercel, use `frontend` as the project root and set `NEXT_PUBLIC_API_BASE_URL` to the public FastAPI `/api/v1` origin. Public frontend variables may contain only Supabase URL/anon values and existing demo flags.
 
-Set backend-only variables in the FastAPI service, including Vonage credentials and signature secret, `PUBLIC_BASE_URL`, both HMAC peppers, and the Fernet key. Never expose these as `NEXT_PUBLIC_*` values. Keep the Supabase service-role key and LLM keys backend-only as before.
+Set backend-only variables in the FastAPI service, including Vonage credentials and signature secret, `PUBLIC_BASE_URL`, `FRONTEND_URL`, all HMAC peppers (including `UPLOAD_TOKEN_PEPPER`), and the Fernet key. Never expose these as `NEXT_PUBLIC_*` values. Keep the Supabase service-role key and LLM keys backend-only as before.
 
 Example:
 
 ```env
 WHATSAPP_PROVIDER=vonage
 PUBLIC_BASE_URL=https://api.obliq.example
+FRONTEND_URL=https://app.obliq.example
+UPLOAD_LINK_TTL_HOURS=72
+UPLOAD_TOKEN_PEPPER=<backend-only-random-value>
 VONAGE_WHATSAPP_FROM=<sandbox-number-digits>
 VONAGE_MESSAGES_BASE_URL=https://messages-sandbox.nexmo.com
 ```
@@ -26,12 +29,13 @@ Status POST:  https://api.obliq.example/api/v1/webhooks/vonage/status
 
 Restart FastAPI after changing `PUBLIC_BASE_URL`. Do not place a proxy-only internal hostname, Docker service name, localhost, or HTTP origin in that variable.
 
-Run the Supabase migration before enabling traffic:
+For a linked hosted project, preview and apply the forward-only migration before enabling traffic:
 
 ```powershell
-supabase db reset
+supabase db push --dry-run
+supabase db push
 ```
 
-For an existing deployed database, use the project’s normal migration deployment command instead of resetting production data.
+Never run `supabase db reset --linked` against production. After deployment, verify `gst-documents` remains private and the `complete_secure_document_upload` RPC is executable only by `service_role`.
 
 No scheduler is claimed in Phase 1. Invoke `scripts/cleanup_vonage_demo_sessions.py` manually or configure an external platform scheduler explicitly.

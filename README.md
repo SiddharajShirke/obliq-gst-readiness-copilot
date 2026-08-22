@@ -8,8 +8,9 @@ OBLIQ is an existing FastAPI, Next.js, and Supabase prototype for GST document c
 
 - Next.js CA dashboard and Supabase email/password authentication with demo-token fallback
 - Multi-tenant PostgreSQL schema, RLS, private Storage, `pgvector`, and full-text retrieval
-- Secure expiring browser upload links
-- PDF/image/CSV/XLSX/JSON classification, parsing, OCR, and optional LLM extraction
+- Secure expiring browser upload links backed by HMAC-protected capabilities
+- Private PDF/image/CSV/XLSX/DOCX/JSON intake with MIME, signature, size, and duplicate validation
+- Existing explicit document classification, parsing, OCR, and optional LLM extraction
 - Controlled LangGraph document, reminder, and assistant workflows
 - GST validation, Purchase Register to GSTR-2B reconciliation, citations, audit logs, and exports
 - Real Vonage Messages API Sandbox text connectivity with isolated temporary GST demo sessions
@@ -32,13 +33,15 @@ Each browser session receives a separate high-entropy dashboard token kept in `s
 
 The former browser chat simulator and active legacy provider have been removed. The mock provider exists only as an automated-test double.
 
-## Phase 1 boundary
+## Phase 2 secure browser intake
 
-> The Vonage Sandbox connection, real WhatsApp delivery, inbound text webhook, session isolation, and delivery-status tracking are implemented in this phase. Direct WhatsApp document-media download, Supabase document storage, AI extraction, and dashboard document display will be implemented in the next phase.
+After a valid START, OBLIQ confirms the live connection. A CA then reviews a checklist-derived Document Request Draft before sending it through the same active Vonage session. At that point OBLIQ creates an HMAC-protected upload capability bound to the cloned application/session and includes its public frontend URL in the approved request. The anonymous page resolves all firm, client, application, session, requirement, bucket, and Storage-path scope on the backend. A valid upload is stored in the private `gst-documents` bucket, finalized atomically in PostgreSQL, and marks only its cloned requirement as received.
 
-Attachments are detected but never downloaded in Phase 1. OBLIQ stores sanitized message metadata, creates no document row, and sends a controlled phase-boundary response.
+The workspace uses one canonical collection summary for required/received/missing counts, percentage, checklist, requests, reminders, and Vonage `STATUS`. Reminders are rebuilt from the live missing rows and reuse the existing active session. An expired or cancelled session can be reconnected explicitly during the 24-hour retention period: the same clone, checklist, uploaded documents, and progress are retained while the old phone binding is cleared and a new single-use START token is issued.
 
-The existing RAG, OCR, Gemini/Groq extraction, document viewers, secure upload, validation, reconciliation, reports, and audit systems are unchanged by this migration.
+Secure browser uploads stop at `awaiting_processing`. They do not invoke OCR, classification, Gemini, Groq, LangGraph extraction, embeddings, or RAG. The session and CA dashboard poll for stored-document status and display **Uploaded / Awaiting Processing** without claiming extraction or review completion.
+
+Direct WhatsApp attachments remain deliberately deferred: OBLIQ detects them, stores sanitized message metadata, downloads no provider media, creates no document row, and directs the judge to the secure browser link. The existing AI/RAG, document viewer, validation, reconciliation, and report architectures are not redesigned.
 
 ## Repository structure
 
@@ -72,7 +75,7 @@ Generate secure local values:
 .\.venv\Scripts\python.exe -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-Use the first command independently for `WHATSAPP_DEMO_TOKEN_PEPPER` and `WHATSAPP_PHONE_HASH_PEPPER`; use the second for `WHATSAPP_PHONE_ENCRYPTION_KEY`.
+Use the first command independently for `UPLOAD_TOKEN_PEPPER`, `WHATSAPP_DEMO_TOKEN_PEPPER`, and `WHATSAPP_PHONE_HASH_PEPPER`; use the second for `WHATSAPP_PHONE_ENCRYPTION_KEY`.
 
 Start the services in separate terminals:
 
@@ -107,7 +110,7 @@ Set `USE_IN_MEMORY_DB=false` and retain the existing Supabase/Auth/Storage varia
 
 ## Existing non-WhatsApp architecture
 
-The document graph still performs classification, parsing/extraction, persistence, deterministic validation, and human review. The reminder graph still requires CA approval for ordinary client reminders. The assistant still combines structured application facts with tenant-isolated hybrid retrieval and cited generation.
+Existing document, validation, reconciliation, and RAG code remains in the repository for later phases and regression coverage. The Phase 2 workspace does not invoke or present those workflows as completed. Secure-link intake stops at `awaiting_processing`, and both document requests and reminders require CA approval before Vonage sends them.
 
 Mock AI mode provides deterministic extraction and embeddings without paid model keys. Live AI mode continues to use the configured Groq/Gemini adapters and existing fallbacks. This Vonage phase does not route WhatsApp messages or attachments into those systems.
 
@@ -140,7 +143,7 @@ Manual cleanup is available because this phase adds no scheduler:
 ## Security notes
 
 - Supabase service-role, Vonage, LLM, Fernet, and HMAC secrets are backend-only.
-- Public upload tokens remain random, hashed, expiring, and revocable.
+- Public upload tokens are high-entropy, domain-separated HMAC-hashed, scoped, expiring, revocable, and redacted from API/access logs.
 - Application tables retain tenant RLS; private Storage continues to use signed URLs.
 - Vonage JSON webhooks are rejected before database writes unless their signed JWT, timestamp, API key, and raw-payload hash validate successfully.
 - All supplied demonstration client and tax information must remain synthetic.
