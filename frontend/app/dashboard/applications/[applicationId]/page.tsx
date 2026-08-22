@@ -15,8 +15,11 @@ import Link from "next/link";
 import {useParams, useRouter} from "next/navigation";
 import {useCallback, useEffect, useMemo, useState} from "react";
 import {toast} from "sonner";
+import {AuditTrailPanel} from "@/components/audit/audit-trail-panel";
 import {PageHeader} from "@/components/dashboard/page-header";
 import {DocumentPanel} from "@/components/documents/document-panel";
+import {FindingsPanel} from "@/components/documents/findings-panel";
+import {ReconciliationPanel} from "@/components/reconciliation/reconciliation-panel";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Card} from "@/components/ui/card";
@@ -51,7 +54,7 @@ const tabs: Array<[Tab, string]> = [
   ["audit", "Audit Trail"],
 ];
 
-const futureStages = ["Extraction Review", "Validation Review", "Reconciliation Review", "Ready for CA Review", "Ready for Filing"];
+const laterStages = ["Ready for CA Review", "Ready for Filing"];
 
 function unavailable(title: string, description: string) {
   return <Card className="grid min-h-72 place-items-center p-8 text-center">
@@ -218,6 +221,9 @@ export default function ApplicationWorkspace() {
   const partial = collection.workflow_status === "partially_received";
   const displayApplicationId = collection.effective_application_id;
   const clientName = application.client?.business_name ?? "Client";
+  const extractionStarted = ["extraction_review", "validation_review", "reconciliation_review"].includes(application.status);
+  const validationStarted = ["validation_review", "reconciliation_review"].includes(application.status);
+  const reconciliationStarted = application.status === "reconciliation_review";
 
   return <>
     <PageHeader
@@ -252,13 +258,16 @@ export default function ApplicationWorkspace() {
           <Stage label="Documents Requested" completed={requested} current={!requested}/>
           <Stage label="Partially Received" completed={complete} current={partial}/>
           <Stage label="Documents Received" completed={complete} current={complete}/>
-          {futureStages.map(label => <Stage key={label} label={label} disabled/>)}
+          <Stage label="Extraction Review" completed={validationStarted} current={extractionStarted && !validationStarted}/>
+          <Stage label="Validation Review" completed={reconciliationStarted} current={validationStarted && !reconciliationStarted}/>
+          <Stage label="Reconciliation Review" current={reconciliationStarted}/>
+          {laterStages.map(label => <Stage key={label} label={label} disabled/>)}
         </div>
       </div>
     </Card>
 
-    <div className="mb-6 flex gap-1 overflow-x-auto rounded-2xl border border-[#e5e2de] bg-white p-1">
-      {tabs.map(([value, label]) => <button key={value} onClick={() => setTab(value)} className={`whitespace-nowrap rounded-xl px-4 py-2.5 text-sm font-semibold transition ${tab === value ? "bg-[#191515] text-white" : "text-[#6b6562] hover:bg-[#f5f3f0]"}`}>{label}</button>)}
+    <div className="mb-6 flex gap-1 overflow-x-auto rounded-2xl border border-[var(--obliq-border)] bg-[var(--obliq-surface)] p-1">
+      {tabs.map(([value, label]) => <button key={value} onClick={() => setTab(value)} className={`obliq-focus whitespace-nowrap rounded-xl px-4 py-2.5 text-sm font-semibold transition ${tab === value ? "obliq-selected" : "obliq-interactive"}`}>{label}</button>)}
     </div>
 
     {tab === "overview" && <div className="grid gap-6 xl:grid-cols-[1.2fr_.8fr]">
@@ -296,31 +305,22 @@ export default function ApplicationWorkspace() {
           <div className="mt-4 rounded-2xl border border-[#e5e2de] p-4"><p className="text-xs text-[#77716e]">Current Status</p><p className="mt-2 font-bold">{collectionStatus}</p></div>
         </Card>
         <Card className="p-5">
-          <h2 className="font-bold">Phase 2 boundary</h2>
+          <h2 className="font-bold">Phase 3 workflow</h2>
           <ul className="mt-4 grid gap-3 text-sm text-[#625d5a]">
             <li className="flex gap-2"><ClipboardCheck size={17}/> Messages require CA review before sending.</li>
             <li className="flex gap-2"><ClipboardCheck size={17}/> Uploaded originals stay private in Supabase Storage.</li>
-            <li className="flex gap-2"><ClipboardCheck size={17}/> Processing and filing readiness remain unavailable.</li>
+            <li className="flex gap-2"><ClipboardCheck size={17}/> Extraction, validation and reconciliation require CA review.</li>
+            <li className="flex gap-2"><ClipboardCheck size={17}/> Filing readiness remains unavailable.</li>
           </ul>
         </Card>
       </div>
     </div>}
 
     {tab === "documents" && <DocumentPanel applicationId={displayApplicationId} checklist={collection.requirements} onChanged={load}/>}
-    {tab === "validation" && unavailable("Validation unavailable", "Validation becomes available after document processing in a later phase.")}
-    {tab === "reconciliation" && unavailable("Reconciliation unavailable", "GSTR-2B reconciliation becomes available after document extraction and validation.")}
-    {tab === "assistant" && unavailable("RAG Assistant unavailable for uploaded documents", "Document RAG is intentionally deferred to Phase 4. No uploaded document content is indexed or queried in Phase 2.")}
-    {tab === "audit" && <Card className="overflow-hidden">
-      <div className="border-b border-[#eeeae6] p-5"><h2 className="font-bold">Audit trail</h2><p className="mt-1 text-xs text-[#77716e]">Real collection, request, upload, reminder, and session events.</p></div>
-      <div className="divide-y divide-[#eeeae6]">
-        {audit.map(event => <div key={event.id} className="grid gap-3 p-5 sm:grid-cols-[auto_1fr_auto]">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#e8f1fa]"><FileText size={16}/></span>
-          <div><p className="text-sm font-semibold">{formatStatus(event.action.replaceAll(".", "_"))}</p><p className="mt-1 text-xs text-[#77716e]">{event.entity_type} · {event.entity_id}</p></div>
-          <time className="text-xs text-[#77716e]">{formatDate(event.created_at)}</time>
-        </div>)}
-        {!audit.length && <div className="p-10 text-center text-sm text-[#77716e]">No audit events yet.</div>}
-      </div>
-    </Card>}
+    {tab === "validation" && <FindingsPanel applicationId={displayApplicationId} onChanged={load}/>}
+    {tab === "reconciliation" && <ReconciliationPanel applicationId={displayApplicationId} onChanged={load}/>}
+    {tab === "assistant" && unavailable("RAG Assistant unavailable for uploaded documents", "Document RAG is intentionally deferred to Phase 4. No uploaded document content is indexed or queried in Phase 3.")}
+    {tab === "audit" && <AuditTrailPanel events={audit}/>}
 
     {draft && <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 p-4" onClick={() => void cancelDraft()}>
       <Card className="w-full max-w-2xl p-6 shadow-2xl" onClick={event => event.stopPropagation()}>

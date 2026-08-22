@@ -17,6 +17,8 @@ export default function SecureUploadPage() {
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [busyRequirementId, setBusyRequirementId] = useState<string | null>(null);
   const [transientStates, setTransientStates] = useState<Record<string, UploadTransientState>>({});
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [submitBusy, setSubmitBusy] = useState(false);
 
   const fetchContext = useCallback(async (statusOnly = false) => {
     const suffix = statusOnly ? "/status" : "";
@@ -73,6 +75,43 @@ export default function SecureUploadPage() {
     }
   }
 
+  async function uploadBulk(path: "bulk-folder" | "bulk-zip", files: File[]) {
+    setBulkBusy(true);
+    try {
+      const data = new FormData();
+      if (path === "bulk-folder") files.forEach(file => data.append("files", file, file.webkitRelativePath || file.name));
+      else data.append("file", files[0]);
+      const result = await apiFetch<{count?: number}>(
+        `/public/upload/${token}/${path}`,
+        {method: "POST", body: data},
+        false,
+      );
+      toast.success(`${result.count ?? files.length} package files routed securely`);
+      setContext(await fetchContext(true));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Bulk upload failed");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function submitForExtraction() {
+    setSubmitBusy(true);
+    try {
+      const batch = await apiFetch<{document_count: number}>(
+        `/public/upload/${token}/submit`,
+        {method: "POST"},
+        false,
+      );
+      toast.success(`${batch.document_count} ${batch.document_count === 1 ? "document" : "documents"} submitted for extraction`);
+      setContext(await fetchContext(true));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Submission failed");
+    } finally {
+      setSubmitBusy(false);
+    }
+  }
+
   if (fatalError) {
     return <main className="grid min-h-screen place-items-center bg-[#e8f1fa] p-6">
       <div className="max-w-lg rounded-3xl bg-white p-8 text-center shadow-xl">
@@ -88,5 +127,10 @@ export default function SecureUploadPage() {
     busyRequirementId={busyRequirementId}
     transientStates={transientStates}
     onUpload={upload}
+    onBulkFolder={files => void uploadBulk("bulk-folder", files)}
+    onBulkZip={file => void uploadBulk("bulk-zip", [file])}
+    bulkBusy={bulkBusy}
+    onSubmit={() => void submitForExtraction()}
+    submitBusy={submitBusy}
   />;
 }

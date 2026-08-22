@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Toaster } from "sonner";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
+import {ThemeProvider, THEME_INIT_SCRIPT} from "@/lib/theme";
 
 export const metadata: Metadata = {
   title: "OBLIQ GST Readiness Copilot",
@@ -10,9 +11,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head><script dangerouslySetInnerHTML={{__html: THEME_INIT_SCRIPT}}/></head>
       <body>
-        <AuthProvider>{children}</AuthProvider>
+        <ThemeProvider><AuthProvider>{children}</AuthProvider></ThemeProvider>
         <Toaster richColors position="top-right" />
       </body>
     </html>

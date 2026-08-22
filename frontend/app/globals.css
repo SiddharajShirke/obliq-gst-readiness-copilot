@@ -6,6 +6,7 @@
   --obliq-blue-soft: #e8f1fa;
   --obliq-canvas: #f8f7f5;
   --obliq-surface: #ffffff;
+  --obliq-surface-raised: #f8f7f5;
   --obliq-ink: #191515;
   --obliq-muted: #625d5a;
   --obliq-border: #e5e2de;
@@ -13,7 +14,77 @@
   --obliq-success: #16833a;
   --obliq-warning: #b7791f;
   --obliq-danger: #c53b3b;
+  --obliq-action: #191515;
+  --obliq-action-hover: #2b2626;
+  --obliq-action-ink: #ffffff;
+  --obliq-interactive-hover: #f5f3f0;
+  --obliq-interactive-active: #191515;
+  --obliq-interactive-active-ink: #ffffff;
+  --obliq-nav-active: #e8f1fa;
+  --obliq-nav-active-ink: #191515;
+  --obliq-segment-active: #ffffff;
+  --obliq-segment-active-ink: #191515;
+  --obliq-disabled: #f4f2f0;
+  --obliq-focus: #72a8d4;
+  --obliq-focus-ring: rgba(164, 197, 229, 0.25);
+  --obliq-success-soft: #ecfdf5;
+  --obliq-success-ink: #047857;
+  --obliq-success-border: #a7f3d0;
+  --obliq-warning-soft: #fffbeb;
+  --obliq-warning-ink: #b45309;
+  --obliq-warning-border: #fde68a;
+  --obliq-danger-soft: #fef2f2;
+  --obliq-danger-ink: #b91c1c;
+  --obliq-danger-border: #fecaca;
+  --obliq-info-soft: #eff6ff;
+  --obliq-info-ink: #1d4ed8;
+  --obliq-info-border: #bfdbfe;
+  --obliq-neutral-soft: #f8fafc;
+  --obliq-neutral-ink: #334155;
+  --obliq-neutral-border: #e2e8f0;
   --obliq-shadow: 0 18px 60px rgba(25, 21, 21, 0.09);
+}
+
+.dark {
+  --obliq-blue: #93c5fd;
+  --obliq-blue-strong: #60a5fa;
+  --obliq-blue-soft: rgba(96, 165, 250, 0.14);
+  --obliq-canvas: #0b1220;
+  --obliq-surface: #111827;
+  --obliq-surface-raised: #1e293b;
+  --obliq-ink: #f1f5f9;
+  --obliq-muted: #94a3b8;
+  --obliq-border: #334155;
+  --obliq-warm: #292524;
+  --obliq-action: #2563eb;
+  --obliq-action-hover: #3b82f6;
+  --obliq-action-ink: #eff6ff;
+  --obliq-interactive-hover: rgba(255, 255, 255, 0.08);
+  --obliq-interactive-active: rgba(96, 165, 250, 0.18);
+  --obliq-interactive-active-ink: #dbeafe;
+  --obliq-nav-active: rgba(96, 165, 250, 0.18);
+  --obliq-nav-active-ink: #dbeafe;
+  --obliq-segment-active: rgba(96, 165, 250, 0.18);
+  --obliq-segment-active-ink: #dbeafe;
+  --obliq-disabled: #1e293b;
+  --obliq-focus: #60a5fa;
+  --obliq-focus-ring: rgba(96, 165, 250, 0.38);
+  --obliq-success-soft: rgba(52, 211, 153, 0.14);
+  --obliq-success-ink: #6ee7b7;
+  --obliq-success-border: rgba(52, 211, 153, 0.38);
+  --obliq-warning-soft: rgba(251, 191, 36, 0.16);
+  --obliq-warning-ink: #fcd34d;
+  --obliq-warning-border: rgba(251, 191, 36, 0.42);
+  --obliq-danger-soft: rgba(248, 113, 113, 0.15);
+  --obliq-danger-ink: #fca5a5;
+  --obliq-danger-border: rgba(248, 113, 113, 0.4);
+  --obliq-info-soft: rgba(96, 165, 250, 0.15);
+  --obliq-info-ink: #93c5fd;
+  --obliq-info-border: rgba(96, 165, 250, 0.4);
+  --obliq-neutral-soft: rgba(148, 163, 184, 0.12);
+  --obliq-neutral-ink: #cbd5e1;
+  --obliq-neutral-border: rgba(148, 163, 184, 0.32);
+  --obliq-shadow: 0 18px 60px rgba(0, 0, 0, 0.42);
 }
 
 * { box-sizing: border-box; }
@@ -24,9 +95,55 @@ body {
   color: var(--obliq-ink);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
+
+.dark .bg-white,
+.dark .bg-white\/95,
+.dark .bg-white\/88,
+.dark .bg-white\/72,
+.dark .bg-white\/60,
+.dark .bg-white\/55 { background-color: var(--obliq-surface); }
+.dark .bg-\[\#f8f7f5\], .dark .bg-\[\#faf9f7\], .dark .bg-\[\#f5f3f0\], .dark .bg-\[\#f3f1ee\], .dark .bg-\[\#f5f8fb\] { background-color: var(--obliq-surface-raised); }
+.dark .bg-\[\#e8f1fa\], .dark .bg-blue-50 { background-color: var(--obliq-blue-soft); }
+.dark .text-\[\#191515\], .dark .text-\[\#211f1e\], .dark .text-\[\#292524\], .dark .text-blue-950, .dark .text-blue-900 { color: var(--obliq-ink); }
+.dark .text-\[\#625d5a\], .dark .text-\[\#6b6562\], .dark .text-\[\#77716e\], .dark .text-\[\#8a837e\] { color: var(--obliq-muted); }
+.dark .border-\[\#e5e2de\], .dark .border-\[\#eeeae6\], .dark .border-\[\#ddd8d3\], .dark .border-\[\#dcd7d2\], .dark .border-\[\#d8d3ce\] { border-color: var(--obliq-border); }
+.dark input, .dark select, .dark textarea { background-color: var(--obliq-surface-raised); color: var(--obliq-ink); border-color: var(--obliq-border); }
+.dark .hover\:bg-\[\#faf9f7\]:hover,
+.dark .hover\:bg-\[\#f8f7f5\]:hover,
+.dark .hover\:bg-\[\#f5f3f0\]:hover,
+.dark .hover\:bg-\[\#f3f1ee\]:hover,
+.dark .hover\:bg-\[\#e8f1fa\]:hover { background-color: var(--obliq-interactive-hover); }
+.dark .focus\:bg-\[\#f5f8fb\]:focus { background-color: var(--obliq-interactive-active); }
+.dark .hover\:text-\[\#191515\]:hover { color: var(--obliq-ink); }
+.dark .bg-emerald-50 { background-color: var(--obliq-success-soft); }
+.dark .text-emerald-700, .dark .text-emerald-800 { color: var(--obliq-success-ink); }
+.dark .border-emerald-200 { border-color: var(--obliq-success-border); }
+.dark .bg-amber-50 { background-color: var(--obliq-warning-soft); }
+.dark .text-amber-700, .dark .text-amber-800 { color: var(--obliq-warning-ink); }
+.dark .border-amber-200 { border-color: var(--obliq-warning-border); }
+.dark .bg-red-50 { background-color: var(--obliq-danger-soft); }
+.dark .text-red-700, .dark .text-red-800 { color: var(--obliq-danger-ink); }
+.dark .border-red-200 { border-color: var(--obliq-danger-border); }
+.dark .text-blue-700, .dark .text-blue-800 { color: var(--obliq-info-ink); }
+.dark .border-blue-100, .dark .border-blue-200 { border-color: var(--obliq-info-border); }
+.dark button:focus-visible,
+.dark a:focus-visible,
+.dark [role="button"]:focus-visible { outline: 2px solid var(--obliq-focus); outline-offset: 2px; }
 a { color: inherit; text-decoration: none; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
+.lucide { color: currentColor; stroke: currentColor; }
+
+.obliq-interactive { color: var(--obliq-muted); }
+.obliq-interactive:hover { background: var(--obliq-interactive-hover); color: var(--obliq-ink); }
+.obliq-interactive:focus-visible { outline: 2px solid var(--obliq-focus); outline-offset: 2px; }
+.obliq-selected { background: var(--obliq-interactive-active); color: var(--obliq-interactive-active-ink); }
+.obliq-selected:hover { background: var(--obliq-interactive-active); color: var(--obliq-interactive-active-ink); }
+.obliq-nav-selected { background: var(--obliq-nav-active); color: var(--obliq-nav-active-ink); }
+.obliq-nav-selected:hover { background: var(--obliq-nav-active); color: var(--obliq-nav-active-ink); }
+.obliq-segment-selected { background: var(--obliq-segment-active); color: var(--obliq-segment-active-ink); }
+.obliq-segment-selected:hover { background: var(--obliq-segment-active); color: var(--obliq-segment-active-ink); }
+.obliq-focus:focus-visible { outline: 2px solid var(--obliq-focus); outline-offset: 2px; box-shadow: 0 0 0 4px var(--obliq-focus-ring); }
 
 ::selection { background: var(--obliq-blue); color: var(--obliq-ink); }
 

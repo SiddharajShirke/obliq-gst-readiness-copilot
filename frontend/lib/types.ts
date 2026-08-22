@@ -64,6 +64,14 @@ export type PublicUploadContext = {
   checklist: PublicUploadRequirement[];
   allowed_extensions: string[];
   maximum_size_mb: number;
+  ready_to_submit_count: number;
+  latest_submission_batch: {
+    id: string;
+    status: string;
+    document_count: number;
+    completed_count: number;
+    failed_count: number;
+  } | null;
 };
 
 export type DocumentRecord = {
@@ -78,6 +86,54 @@ export type DocumentRecord = {
   source: string;
   created_at: string;
   signed_url?: string;
+};
+
+export type GSTRecord = {
+  id: string;
+  document_id: string;
+  invoice_category: string;
+  document_type?: string;
+  invoice_number?: string | null;
+  invoice_date?: string | null;
+  supplier_name?: string | null;
+  supplier_gstin?: string | null;
+  customer_name?: string | null;
+  customer_gstin?: string | null;
+  taxable_value?: string | number | null;
+  igst?: string | number | null;
+  cgst?: string | number | null;
+  sgst?: string | number | null;
+  cess?: string | number | null;
+  total_tax?: string | number | null;
+  invoice_total?: string | number | null;
+  itc_status?: string | null;
+  rcm_flag?: boolean | null;
+  source_page?: number | null;
+  source_row?: number | null;
+  review_status: string;
+};
+
+export type ExtractionPortfolioScope =
+  | "sales_register"
+  | "purchase_register"
+  | "sales_invoices"
+  | "purchase_expense_invoices"
+  | "credit_debit_notes"
+  | "gst_special_transactions"
+  | "combined";
+
+export type ExtractionPortfolioResult = {
+  scope: ExtractionPortfolioScope;
+  summary: {
+    record_count: number;
+    taxable_value: string | number;
+    total_tax: string | number;
+    document_value: string | number;
+    approved_count: number;
+    needs_review_count: number;
+    rcm_count: number;
+  };
+  records: GSTRecord[];
 };
 
 export type Extraction = {
@@ -106,6 +162,22 @@ export type Finding = {
   invoice_record_id?: string;
 };
 
+export type ValidationCorrectionProposal = {
+  id: string;
+  proposal_type: "manual" | "ai";
+  status: "proposed" | "applied" | "rejected";
+  changes: Array<{
+    record_id: string;
+    field: string;
+    before: unknown;
+    after: unknown;
+    rationale: string;
+  }>;
+  rationale?: string | null;
+  provider?: string | null;
+  model?: string | null;
+};
+
 export type ReconciliationItem = {
   id: string;
   match_status: string;
@@ -113,6 +185,13 @@ export type ReconciliationItem = {
   purchase_invoice_id?: string;
   gstr2b_invoice_id?: string;
   differences?: Record<string, unknown>;
+  evidence?: {
+    books?: Record<string, string | number | boolean | null> | null;
+    gstr2b?: Record<string, string | number | boolean | null> | null;
+    difference_fields?: string[];
+  };
+  special_flags?: string[];
+  review_status?: string;
 };
 
 export type ReconciliationResult = {
@@ -120,6 +199,39 @@ export type ReconciliationResult = {
   status?: string;
   summary: Record<string, number>;
   items: ReconciliationItem[];
+};
+
+export type AlertExplanation = {
+  title: string;
+  what_happened: string;
+  why_flagged: string;
+  what_ca_should_review: string;
+  short_summary: string;
+};
+
+export type ReconciliationAlert = {
+  id: string;
+  application_id: string;
+  client_id: string;
+  reconciliation_item_id?: string | null;
+  validation_finding_id?: string | null;
+  workflow_area?: string | null;
+  alert_category?: string | null;
+  client_name?: string;
+  tax_period?: string;
+  alert_type: string;
+  title: string;
+  message: string;
+  severity: string;
+  status: string;
+  evidence: {
+    books?: Record<string, string | number | boolean | null> | null;
+    gstr2b?: Record<string, string | number | boolean | null> | null;
+    difference_fields?: string[];
+  };
+  ai_explanation?: AlertExplanation | null;
+  ai_explanation_status: string;
+  created_at: string;
 };
 
 export type Reminder = {

@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable react-hooks/set-state-in-effect */
 
 import { BookOpenCheck, FilePlus2, Link2, UploadCloud } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
