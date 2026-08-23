@@ -283,6 +283,30 @@ export type AssistantAnswer = {
   source_types: string[];
   used_application_data: boolean;
   confidence: number;
+  calculation?: {
+    operation: "count" | "sum" | "minimum" | "maximum" | "average" | string;
+    metric?: string | null;
+    value?: string | number | null;
+    record_count: number;
+  } | null;
+  rows: Array<Record<string, unknown>>;
+  clarification?: string | null;
+  proposed_action?: {
+    id: string;
+    action_type: string;
+    title: string;
+    preview: Record<string, unknown>;
+    affected_count: number;
+    warnings: string[];
+    expires_at: string;
+    status: string;
+  } | null;
+  tool_trace: Array<{
+    tool: string;
+    domain: string;
+    operation: string;
+    row_count: number;
+  }>;
 };
 
 export type AuditEvent = {

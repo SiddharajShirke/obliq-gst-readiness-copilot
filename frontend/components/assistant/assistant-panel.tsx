@@ -5,6 +5,7 @@ import {FormEvent, useEffect, useMemo, useState} from "react";
 import {toast} from "sonner";
 import {apiFetch} from "../../lib/api";
 import type {AssistantAnswer, Citation} from "../../lib/types";
+import {buildAssistantViewModel} from "./assistant-view-model";
 import {Button} from "../ui/button";
 import {Textarea} from "../ui/field";
 
@@ -13,6 +14,7 @@ type Message = {
   text: string;
   citations?: Citation[];
   meta?: string;
+  view?: ReturnType<typeof buildAssistantViewModel>;
 };
 
 type Props = {
@@ -113,6 +115,7 @@ export function RagAssistantDrawer({
         role: "assistant",
         text: answer.answer,
         citations: answer.citations,
+        view: buildAssistantViewModel(answer),
         meta: `${answer.source_types.length ? answer.source_types.join(" + ") : "scoped evidence"} · ${Math.round(answer.confidence * 100)}% confidence`,
       }]);
     } catch (error) {
@@ -121,6 +124,39 @@ export function RagAssistantDrawer({
         role: "assistant",
         text: "I could not retrieve a grounded answer just now. No application data was changed.",
       }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function decideAction(
+    messageIndex: number,
+    proposalId: string,
+    decision: "confirm" | "cancel",
+  ) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const result = await apiFetch<{status: string}>(
+        `/assistant/actions/${proposalId}/${decision}`,
+        {method: "POST", body: JSON.stringify({conversation_id: conversationId})},
+      );
+      setMessages(rows => rows.map((row, index) => {
+        if (index !== messageIndex || !row.view?.action) return row;
+        return {
+          ...row,
+          text: decision === "confirm"
+            ? "The CA-confirmed action was executed and audited."
+            : "The proposed action was cancelled. No application data was changed.",
+          view: {
+            ...row.view,
+            action: {...row.view.action, status: result.status},
+          },
+        };
+      }));
+      toast.success(decision === "confirm" ? "Action executed" : "Action cancelled");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Action could not be completed");
     } finally {
       setBusy(false);
     }
@@ -175,6 +211,30 @@ export function RagAssistantDrawer({
             : "max-w-[94%] rounded-2xl rounded-bl-sm border border-[var(--obliq-border)] bg-[var(--obliq-surface)] p-4 text-sm leading-6 shadow-sm"}
         >
           <p className="whitespace-pre-wrap">{message.text}</p>
+          {message.view?.summary && <div className="mt-3 rounded-2xl border border-[var(--obliq-border)] bg-[var(--obliq-surface-raised)] p-4">
+            <p className="text-[11px] font-bold uppercase tracking-[.12em] text-[var(--obliq-muted)]">{message.view.summary.label}</p>
+            <p className="mt-2 text-2xl font-black text-[var(--obliq-blue-strong)]">{message.view.summary.value}</p>
+            <p className="mt-1 text-xs text-[var(--obliq-muted)]">{message.view.summary.caption}</p>
+          </div>}
+          {message.view?.table && <div className="mt-3 overflow-x-auto rounded-2xl border border-[var(--obliq-border)]">
+            <table className="min-w-full text-left text-xs">
+              <thead className="bg-[var(--obliq-surface-raised)] text-[var(--obliq-muted)]">
+                <tr>{message.view.table.columns.map(column => <th key={column} className="whitespace-nowrap px-3 py-2 font-bold capitalize">{column.replaceAll("_", " ")}</th>)}</tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--obliq-border)]">
+                {message.view.table.rows.map((row, rowIndex) => <tr key={rowIndex} className="obliq-interactive">
+                  {message.view?.table?.columns.map(column => <td key={column} className="whitespace-nowrap px-3 py-2 text-[var(--obliq-ink)]">{String(row[column] ?? "—")}</td>)}
+                </tr>)}
+              </tbody>
+            </table>
+          </div>}
+          {message.view?.clarification && <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">{message.view.clarification}</div>}
+          {message.view?.action && <ActionPreview
+            action={message.view.action}
+            busy={busy}
+            onConfirm={() => decideAction(index, message.view!.action!.id, "confirm")}
+            onCancel={() => decideAction(index, message.view!.action!.id, "cancel")}
+          />}
           {message.meta && <p className="mt-3 text-[11px] text-[var(--obliq-muted)]">{message.meta}</p>}
           {message.citations?.map((citation, citationIndex) => <CitationCard key={`${citation.title}-${citationIndex}`} citation={citation}/>)}
         </div>)}
@@ -208,6 +268,50 @@ function CitationCard({citation}: {citation: Citation}) {
     <BookOpenCheck size={14} className="mr-2 inline text-[var(--obliq-blue-strong)]"/>
     <strong className="text-[var(--obliq-ink)]">{citation.title}</strong>
     {location && <p className="mt-1 pl-6">{location}</p>}
+  </div>;
+}
+
+function ActionPreview({
+  action,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  action: NonNullable<ReturnType<typeof buildAssistantViewModel>["action"]>;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const pending = action.status === "pending_confirmation";
+  return <section className="mt-3 rounded-2xl border border-[var(--obliq-blue-strong)]/35 bg-[var(--obliq-surface-raised)] p-4">
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <p className="text-[11px] font-bold uppercase tracking-[.12em] text-[var(--obliq-blue-strong)]">CA confirmation required</p>
+        <h3 className="mt-1 font-bold">{action.title}</h3>
+      </div>
+      <span className="rounded-full bg-sky-500/10 px-2 py-1 text-[10px] font-bold uppercase text-sky-700 dark:text-sky-300">{action.status.replaceAll("_", " ")}</span>
+    </div>
+    <div className="mt-3 grid grid-cols-2 gap-2">
+      <PreviewValues title="Before" values={action.before}/>
+      <PreviewValues title="After" values={action.after}/>
+    </div>
+    {action.warnings.map(warning => <p key={warning} className="mt-3 text-xs text-[var(--obliq-muted)]"><ShieldCheck size={13} className="mr-1 inline"/>{warning}</p>)}
+    {pending && <div className="mt-4 flex gap-2">
+      <Button type="button" disabled={busy} onClick={onConfirm} className="flex-1">Confirm</Button>
+      <Button type="button" disabled={busy} onClick={onCancel} variant="secondary" className="flex-1">Cancel</Button>
+    </div>}
+  </section>;
+}
+
+function PreviewValues({title, values}: {title: string; values: Record<string, unknown>}) {
+  return <div className="rounded-xl border border-[var(--obliq-border)] bg-[var(--obliq-surface)] p-3">
+    <p className="text-[10px] font-bold uppercase tracking-[.1em] text-[var(--obliq-muted)]">{title}</p>
+    {Object.entries(values).length === 0
+      ? <p className="mt-2 text-xs text-[var(--obliq-muted)]">No field changes</p>
+      : Object.entries(values).map(([key, value]) => <div key={key} className="mt-2">
+        <p className="text-[10px] capitalize text-[var(--obliq-muted)]">{key.replaceAll("_", " ")}</p>
+        <p className="break-words text-xs font-semibold">{String(value ?? "—")}</p>
+      </div>)}
   </div>;
 }
 
