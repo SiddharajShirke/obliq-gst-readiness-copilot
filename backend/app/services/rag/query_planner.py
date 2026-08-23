@@ -178,10 +178,10 @@ def deterministic_plan(question: str) -> QueryPlan:
             limit=1 if is_extreme else 50,
         )
 
-    if any(term in normalized for term in ("validation", "finding", "invalid")):
-        return QueryPlan(domain=QueryDomain.VALIDATION, operation=QueryOperation.LIST, limit=50)
     if "alert" in normalized:
         return QueryPlan(domain=QueryDomain.ALERTS, operation=QueryOperation.LIST, limit=50)
+    if any(term in normalized for term in ("validation", "finding", "invalid")):
+        return QueryPlan(domain=QueryDomain.VALIDATION, operation=QueryOperation.LIST, limit=50)
     if any(term in normalized for term in ("missing document", "document checklist", "collection")):
         return QueryPlan(domain=QueryDomain.CHECKLIST, operation=QueryOperation.SUMMARIZE)
 

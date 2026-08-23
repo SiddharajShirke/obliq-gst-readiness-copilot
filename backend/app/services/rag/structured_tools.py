@@ -200,6 +200,12 @@ def _citation(domain: QueryDomain, row: dict[str, Any] | None = None) -> dict[st
             "title": f"Reconciliation · {identity or row.get('id', 'summary')}",
             "reference": row.get("id"),
         }
+    if domain == QueryDomain.ALERTS:
+        return {
+            "source_type": "alert",
+            "title": f"Alert · {row.get('title') or row.get('alert_type') or 'Application alert'}",
+            "reference": row.get("id"),
+        }
     labels = {
         QueryDomain.TRANSACTIONS: "Extracted GST records",
         QueryDomain.VALIDATION: "Validation findings",

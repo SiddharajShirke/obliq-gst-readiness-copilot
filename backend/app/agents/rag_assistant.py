@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, TypedDict
@@ -9,12 +10,14 @@ from typing import Any, TypedDict
 from app.config import Settings
 from app.prompts.rag import RAG_SYSTEM_PROMPT
 from app.repositories.base import DataStore
+from app.schemas.assistant_tools import QueryDomain, QueryOperation, QueryPlan, StructuredToolResult
 from app.schemas.rag import AssistantModelOutput
 from app.services.audit import record_audit
 from app.services.llm.providers import complete_groq_json
 from app.services.rag.application_context import load_structured_facts
-from app.services.rag.document_indexing import sync_application_documents
+from app.services.rag.query_planner import deterministic_plan
 from app.services.rag.retrieval import retrieve_application_documents, retrieve_knowledge
+from app.services.rag.structured_tools import execute_structured_plan
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +27,7 @@ EXACT_FACT_INTENTS = {
     "transaction_lookup",
     "reconciliation",
     "alerts",
+    "alert_explanation",
     "validation",
     "extraction_summary",
     "scope_refusal",
@@ -38,6 +42,8 @@ class RAGState(TypedDict, total=False):
     conversation_id: str
     source_type: str | None
     intent: str
+    query_plan: QueryPlan
+    structured_result: StructuredToolResult
     application_data: dict[str, Any]
     application_evidence: list[dict[str, Any]]
     knowledge_evidence: list[dict[str, Any]]
@@ -59,6 +65,7 @@ class _FallbackGraph:
             self.assistant.validate_access,
             self.assistant.classify_question,
             self.assistant.load_structured_facts,
+            self.assistant.execute_structured_tools,
             self.assistant.retrieve_application_evidence,
             self.assistant.retrieve_knowledge_if_needed,
             self.assistant.generate_grounded_answer,
@@ -85,6 +92,7 @@ class RAGAssistant:
             ("validate_access", self.validate_access),
             ("classify_question", self.classify_question),
             ("load_structured_facts", self.load_structured_facts),
+            ("execute_structured_tools", self.execute_structured_tools),
             ("retrieve_application_evidence", self.retrieve_application_evidence),
             ("retrieve_knowledge_if_needed", self.retrieve_knowledge_if_needed),
             ("generate_grounded_answer", self.generate_grounded_answer),
@@ -122,14 +130,6 @@ class RAGAssistant:
             limit=8,
         )
         history.reverse()
-        await self._store_message(
-            firm_id=firm_id,
-            application_id=application_id,
-            user_id=user_id,
-            conversation_id=conversation_id,
-            role="user",
-            content=question,
-        )
         result = await self.graph.ainvoke(
             {
                 "question": question,
@@ -142,15 +142,29 @@ class RAGAssistant:
             }
         )
         answer = result["answer"]
-        await self._store_message(
-            firm_id=firm_id,
-            application_id=application_id,
-            user_id=user_id,
-            conversation_id=conversation_id,
-            role="assistant",
-            content=answer["answer"],
-            citations=answer["citations"],
-            source_types=answer["source_types"],
+        application = (result.get("application_data") or {}).get("application") or {}
+        demo_session_id = application.get("demo_session_id")
+        await asyncio.gather(
+            self._store_message(
+                firm_id=firm_id,
+                application_id=application_id,
+                demo_session_id=demo_session_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                role="user",
+                content=question,
+            ),
+            self._store_message(
+                firm_id=firm_id,
+                application_id=application_id,
+                demo_session_id=demo_session_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                role="assistant",
+                content=answer["answer"],
+                citations=answer["citations"],
+                source_types=answer["source_types"],
+            ),
         )
         return answer
 
@@ -159,6 +173,7 @@ class RAGAssistant:
         *,
         firm_id: str,
         application_id: str,
+        demo_session_id: str | None,
         user_id: str,
         conversation_id: str,
         role: str,
@@ -166,13 +181,12 @@ class RAGAssistant:
         citations: list[dict[str, Any]] | None = None,
         source_types: list[str] | None = None,
     ) -> None:
-        application = await self.store.get_row("applications", application_id)
         await self.store.insert_row(
             "assistant_messages",
             {
                 "firm_id": firm_id,
                 "application_id": application_id,
-                "demo_session_id": (application or {}).get("demo_session_id"),
+                "demo_session_id": demo_session_id,
                 "user_id": user_id,
                 "conversation_id": conversation_id,
                 "role": role,
@@ -186,7 +200,7 @@ class RAGAssistant:
         application = await self.store.get_row("applications", state["application_id"])
         if not application or str(application.get("firm_id")) != str(state["firm_id"]):
             return {"application_data": {"error": "Application not found"}}
-        return {}
+        return {"application_data": {"application": application}}
 
     async def classify_question(self, state: RAGState) -> dict[str, Any]:
         question = state["question"].lower()
@@ -207,6 +221,17 @@ class RAGAssistant:
             intent = "missing_documents"
         elif any(word in question for word in ("draft", "reminder", "ask the client")):
             intent = "draft_reminder"
+        elif any(
+            phrase in question
+            for phrase in (
+                "what does this response mean",
+                "what does this mean",
+                "explain this response",
+                "explain this issue",
+                "explain this result",
+            )
+        ):
+            intent = "alert_explanation"
         elif "alert" in question or "raised" in question:
             intent = "alerts"
         elif any(
@@ -222,7 +247,25 @@ class RAGAssistant:
             intent = "transaction_lookup"
         else:
             intent = "guidance"
-        return {"intent": intent}
+        plan = deterministic_plan(state["question"])
+        dynamic_domains = {
+            QueryDomain.TRANSACTIONS,
+            QueryDomain.VALIDATION,
+            QueryDomain.ALERTS,
+            QueryDomain.AUDIT,
+            QueryDomain.DOCUMENTS,
+        }
+        if intent != "scope_refusal" and (
+            plan.operation == QueryOperation.CLARIFY
+            or plan.domain in dynamic_domains
+            or (
+                plan.domain == QueryDomain.RECONCILIATION
+                and intent != "alert_explanation"
+                and "/" not in state["question"]
+            )
+        ):
+            intent = "dynamic_structured"
+        return {"intent": intent, "query_plan": plan}
 
     async def load_structured_facts(self, state: RAGState) -> dict[str, Any]:
         if (state.get("application_data") or {}).get("error"):
@@ -232,18 +275,37 @@ class RAGAssistant:
             application_id=state["application_id"],
             question=state["question"],
             intent=state["intent"],
+            application=(state.get("application_data") or {}).get("application"),
         )
         return {"application_data": data}
 
+    async def execute_structured_tools(self, state: RAGState) -> dict[str, Any]:
+        plan = state.get("query_plan")
+        if (
+            not plan
+            or state.get("intent") != "dynamic_structured"
+            or (state.get("application_data") or {}).get("error")
+        ):
+            return {}
+        result = await execute_structured_plan(
+            self.store,
+            application_id=state["application_id"],
+            plan=plan,
+        )
+        return {"structured_result": result}
+
     async def retrieve_application_evidence(self, state: RAGState) -> dict[str, Any]:
+        plan = state.get("query_plan")
+        if plan and not plan.needs_text_evidence:
+            return {"application_evidence": []}
         if state["intent"] in {
             "missing_documents",
             "draft_reminder",
             "alerts",
+            "alert_explanation",
             "scope_refusal",
         }:
             return {"application_evidence": []}
-        await sync_application_documents(self.store, self.settings, state["application_id"])
         rows = await retrieve_application_documents(
             self.store,
             self.settings,
@@ -254,6 +316,9 @@ class RAGAssistant:
         return {"application_evidence": rows}
 
     async def retrieve_knowledge_if_needed(self, state: RAGState) -> dict[str, Any]:
+        plan = state.get("query_plan")
+        if plan and not plan.needs_knowledge:
+            return {"knowledge_evidence": []}
         if state["intent"] not in {"guidance", "reconciliation", "validation"}:
             return {"knowledge_evidence": []}
         rows = await retrieve_knowledge(
@@ -296,6 +361,40 @@ class RAGAssistant:
         if status == "books_only":
             return f"{books.get('invoice_number')} appears only in the books."
         return f"The stored reconciliation status is {str(status).replace('_', ' ')}."
+
+    @staticmethod
+    def _alert_explanation_answer(alert: dict[str, Any]) -> str:
+        explanation = alert.get("ai_explanation") or {}
+        evidence = alert.get("evidence") or {}
+        books = evidence.get("books") or {}
+        gstr2b = evidence.get("gstr2b") or {}
+        invoice_number = books.get("invoice_number") or gstr2b.get("invoice_number")
+        difference_fields = evidence.get("difference_fields") or []
+        lines = [str(alert.get("title") or alert.get("alert_type") or "Review alert")]
+        if explanation.get("what_happened"):
+            lines.append(str(explanation["what_happened"]))
+        elif difference_fields:
+            comparisons = []
+            for field in difference_fields:
+                comparisons.append(
+                    f"{str(field).replace('_', ' ')}: books {books.get(field)} vs "
+                    f"GSTR-2B {gstr2b.get(field)}"
+                )
+            lines.append("OBLIQ found " + "; ".join(comparisons) + ".")
+        if explanation.get("why_flagged"):
+            lines.append("Why flagged: " + str(explanation["why_flagged"]))
+        if explanation.get("what_ca_should_review"):
+            lines.append("CA review: " + str(explanation["what_ca_should_review"]))
+        elif invoice_number:
+            lines.append(
+                f"CA review: compare invoice {invoice_number}, the books record, and the "
+                "GSTR-2B entry before deciding the GST/ITC treatment."
+            )
+        lines.append(
+            "AI-generated explanation for review assistance. Final GST and ITC treatment "
+            "remains subject to CA verification."
+        )
+        return "\n\n".join(lines)
 
     def _mock_answer(self, state: RAGState) -> tuple[str, float]:
         data = state.get("application_data") or {}
@@ -352,6 +451,14 @@ class RAGAssistant:
                 )
                 return answer, 1.0
             return "No findings have been explicitly raised as alerts.", 1.0
+        if intent == "alert_explanation":
+            alerts = data.get("alerts") or []
+            if alerts:
+                return self._alert_explanation_answer(alerts[0]), 1.0
+            return (
+                "I do not have a raised alert in this GST application to explain.",
+                0.25,
+            )
         if intent == "validation" and data.get("validation_findings"):
             answer = "The current validation findings are: " + "; ".join(
                 row.get("message", "Review finding")
@@ -367,6 +474,33 @@ class RAGAssistant:
                     for row in categories
                 )
                 return answer, 0.98
+        if intent == "guidance" and data.get("collection"):
+            collection = data["collection"]
+            categories = (data.get("extraction_summary") or {}).get("categories") or []
+            record_count = sum(int(row.get("record_count") or 0) for row in categories)
+            review_count = sum(int(row.get("needs_review") or 0) for row in categories)
+            validation_count = len(data.get("validation_findings") or [])
+            reconciliation_review = int(
+                ((data.get("reconciliation") or {}).get("summary") or {}).get(
+                    "needs_review", 0
+                )
+                or 0
+            )
+            alert_count = len(data.get("alerts") or [])
+            client_name = (data.get("client") or {}).get("business_name") or "This client"
+            period = (data.get("application") or {}).get("period_label") or "this GST period"
+            return (
+                f"Application review snapshot for {client_name} ({period}): document "
+                f"collection is {collection.get('received_count', 0)}/"
+                f"{collection.get('required_count', 0)} "
+                f"({collection.get('progress_percent', 0)}%). The extracted portfolio has "
+                f"{record_count} records; {review_count} need CA review. There are "
+                f"{validation_count} validation findings, {reconciliation_review} "
+                f"reconciliation items needing review, and {alert_count} raised alert"
+                f"{'s' if alert_count != 1 else ''}. Review the flagged source evidence "
+                "before making the final GST or ITC decision.",
+                0.8,
+            )
         evidence = state.get("application_evidence") or state.get("knowledge_evidence") or []
         if evidence:
             return str(evidence[0]["content"])[:700], 0.8
@@ -374,6 +508,81 @@ class RAGAssistant:
             "I do not have enough evidence in this GST application to answer that question.",
             0.25,
         )
+
+    @staticmethod
+    def _money_label(metric: str | None) -> str:
+        return {
+            "taxable_value": "taxable value",
+            "total_tax": "total GST",
+            "invoice_total": "total invoice value",
+            "igst": "IGST",
+            "cgst": "CGST",
+            "sgst_utgst": "SGST/UTGST",
+            "cess": "cess",
+        }.get(metric or "", (metric or "value").replace("_", " "))
+
+    def _structured_answer(self, state: RAGState) -> tuple[str, float]:
+        plan = state["query_plan"]
+        result = state["structured_result"]
+        if plan.operation == QueryOperation.CLARIFY:
+            return plan.clarification or "Please clarify the requested application value.", 1.0
+        if plan.operation == QueryOperation.COUNT:
+            subject = (
+                "tax invoice records"
+                if plan.domain == QueryDomain.TRANSACTIONS
+                else "records"
+            )
+            return f"This GST application contains {result.value} {subject}.", 1.0
+        if plan.operation in {QueryOperation.MINIMUM, QueryOperation.MAXIMUM}:
+            if not result.data or result.value is None:
+                return "No matching records were found in this GST application.", 1.0
+            record = result.data[0]
+            direction = "lowest" if plan.operation == QueryOperation.MINIMUM else "highest"
+            identity = (
+                record.get("invoice_number")
+                or record.get("document_number")
+                or record.get("id")
+            )
+            return (
+                f"The tax invoice with the {direction} {self._money_label(plan.metric)} is "
+                f"{identity} at ₹{result.value}."
+            ), 1.0
+        if plan.operation in {QueryOperation.SUM, QueryOperation.AVERAGE}:
+            label = "total" if plan.operation == QueryOperation.SUM else "average"
+            return (
+                f"The {label} {self._money_label(plan.metric)} across {result.row_count} "
+                f"matching records is ₹{result.value or 0}."
+            ), 1.0
+        if plan.domain == QueryDomain.RECONCILIATION:
+            if not result.data:
+                return "No matching reconciliation items were found.", 1.0
+            identities = []
+            for row in result.data[:20]:
+                evidence = row.get("evidence") or {}
+                books = evidence.get("books") or {}
+                gstr2b = evidence.get("gstr2b") or {}
+                identity = books.get("invoice_number") or gstr2b.get("invoice_number")
+                identities.append(f"{identity or row.get('id')} ({row.get('match_status')})")
+            return "The matching reconciliation items are: " + "; ".join(identities) + ".", 1.0
+        if plan.domain == QueryDomain.AUDIT:
+            if not result.data:
+                return "No matching audit events were found for this application.", 1.0
+            rows = [
+                f"{row.get('action')} at {row.get('created_at')}"
+                for row in result.data[:20]
+            ]
+            return "The application audit trail shows: " + "; ".join(rows) + ".", 1.0
+        if plan.domain == QueryDomain.ALERTS:
+            if not result.data:
+                return "No findings have been explicitly raised as alerts.", 1.0
+            rows = [
+                f"{row.get('title') or row.get('alert_type')} ({row.get('status', 'open')})"
+                for row in result.data[:20]
+            ]
+            return "The CA explicitly raised these Alerts Dashboard items: " + "; ".join(rows), 1.0
+        if not result.data:
+            return "No matching records were found in this GST application.", 1.0
+        return f"I found {result.row_count} matching application records.", 1.0
 
     @staticmethod
     def _compact_model_payload(state: RAGState) -> dict[str, Any]:
@@ -434,30 +643,56 @@ class RAGAssistant:
         }
 
     async def generate_grounded_answer(self, state: RAGState) -> dict[str, Any]:
-        if self.settings.ai_mode == "mock" or state["intent"] in EXACT_FACT_INTENTS:
+        if state.get("intent") == "dynamic_structured" and state.get("structured_result"):
+            answer, confidence = self._structured_answer(state)
+            return {"draft_answer": answer, "confidence": confidence}
+        has_text_evidence = bool(
+            state.get("application_evidence") or state.get("knowledge_evidence")
+        )
+        if (
+            self.settings.ai_mode == "mock"
+            or state["intent"] in EXACT_FACT_INTENTS
+            or (state["intent"] == "guidance" and not has_text_evidence)
+        ):
             answer, confidence = self._mock_answer(state)
             return {"draft_answer": answer, "confidence": confidence}
         payload = self._compact_model_payload(state)
         try:
-            output = await complete_groq_json(
-                self.settings,
-                system_prompt=RAG_SYSTEM_PROMPT,
-                user_prompt=(
-                    "Answer from this scoped evidence only.\n"
-                    f"<application_evidence>{json.dumps(payload, default=str)}"
-                    "</application_evidence>"
+            output = await asyncio.wait_for(
+                complete_groq_json(
+                    self.settings,
+                    model=self.settings.effective_groq_rag_model,
+                    max_tokens=self.settings.rag_max_output_tokens,
+                    system_prompt=RAG_SYSTEM_PROMPT,
+                    user_prompt=(
+                        "Answer from this scoped evidence only.\n"
+                        f"<application_evidence>{json.dumps(payload, default=str)}"
+                        "</application_evidence>"
+                    ),
                 ),
+                timeout=self.settings.rag_generation_timeout_seconds,
             )
             validated = AssistantModelOutput.model_validate(output)
             return {"draft_answer": validated.answer, "confidence": validated.confidence}
         except Exception as exc:
-            logger.error("Grounded assistant generation failed: %s", type(exc).__name__)
+            response = getattr(exc, "response", None)
+            provider_error: dict[str, Any] = {}
+            if response is not None:
+                try:
+                    provider_error = (response.json() or {}).get("error") or {}
+                except (TypeError, ValueError):
+                    provider_error = {}
+            logger.error(
+                "Grounded assistant generation failed: type=%s status=%s code=%s message=%s",
+                type(exc).__name__,
+                getattr(response, "status_code", None),
+                provider_error.get("code"),
+                provider_error.get("message"),
+            )
+            answer, confidence = self._mock_answer(state)
             return {
-                "draft_answer": (
-                    "Grounded AI guidance is temporarily unavailable. No application data "
-                    "was changed; please retry this question."
-                ),
-                "confidence": 0.0,
+                "draft_answer": answer,
+                "confidence": min(confidence, 0.8),
             }
 
     @staticmethod
@@ -475,9 +710,14 @@ class RAGAssistant:
     def _citations(self, state: RAGState) -> list[dict[str, Any]]:
         data = state.get("application_data") or {}
         citations: list[dict[str, Any]] = []
+        if state.get("structured_result"):
+            citations.extend(state["structured_result"].citations)
         intent = state["intent"]
         period = str((data.get("application") or {}).get("period_label") or "GST period")
-        if intent in {"missing_documents", "draft_reminder"}:
+        has_collection_facts = bool(data.get("collection"))
+        if intent in {"missing_documents", "draft_reminder"} or (
+            intent == "guidance" and has_collection_facts
+        ):
             citations.append(
                 {
                     "source_type": "structured_fact",
@@ -608,7 +848,7 @@ class RAGAssistant:
                 "model": (
                     "mock"
                     if self.settings.ai_mode == "mock"
-                    else self.settings.effective_groq_model
+                    else self.settings.effective_groq_rag_model
                 ),
                 "status": "generated",
             },

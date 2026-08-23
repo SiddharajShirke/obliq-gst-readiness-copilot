@@ -4,6 +4,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.agents.rag_assistant import RAGAssistant
 from app.config import Settings
 from app.repositories.memory import MemoryStore
 from app.schemas.assistant_tools import QueryDomain, QueryFilter, QueryOperation, QueryPlan
@@ -182,3 +183,51 @@ async def test_reconciliation_and_audit_tools_remain_application_scoped(
 
     assert reconciliation.data[0]["evidence"]["gstr2b"]["invoice_number"] == "ONLY-2B"
     assert [row["action"] for row in audit.data] == ["document.approved"]
+
+
+@pytest.mark.asyncio
+async def test_assistant_answers_dynamic_count_and_minimum_without_generic_snapshot(
+    store: MemoryStore,
+) -> None:
+    application_id = "30000000-0000-0000-0000-000000000001"
+    await _record(
+        store,
+        application_id=application_id,
+        invoice_number="DYNAMIC-HIGH",
+        invoice_total="1180.00",
+        taxable_value="1000.00",
+    )
+    await _record(
+        store,
+        application_id=application_id,
+        invoice_number="DYNAMIC-LOW",
+        invoice_total="590.00",
+        taxable_value="500.00",
+    )
+    assistant = RAGAssistant(
+        store,
+        Settings(app_env="test", ai_mode="mock", use_in_memory_db=True, _env_file=None),
+    )
+
+    count_answer = await assistant.query(
+        question="What is count of tax invoices?",
+        firm_id="11111111-1111-1111-1111-111111111111",
+        application_id=application_id,
+        user_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        conversation_id="dynamic-count",
+        source_type=None,
+    )
+    minimum_answer = await assistant.query(
+        question="Which tax invoice has the lowest total invoice value?",
+        firm_id="11111111-1111-1111-1111-111111111111",
+        application_id=application_id,
+        user_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        conversation_id="dynamic-minimum",
+        source_type=None,
+    )
+
+    assert "2" in count_answer["answer"]
+    assert "tax invoice" in count_answer["answer"].lower()
+    assert "application review snapshot" not in count_answer["answer"].lower()
+    assert "DYNAMIC-LOW" in minimum_answer["answer"]
+    assert "590.00" in minimum_answer["answer"]
