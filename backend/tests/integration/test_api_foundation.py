@@ -11,6 +11,9 @@ def test_health_endpoint_reports_demo_dependencies() -> None:
     payload = response.json()
     assert payload["status"] == "ok"
     assert payload["database"] in {"memory", "supabase"}
+    assert payload["embedding_warmup_enabled"] is False
+    assert isinstance(payload["uptime_seconds"], int)
+    assert "release" in payload
 
 
 def test_clients_reject_missing_bearer_token() -> None:
