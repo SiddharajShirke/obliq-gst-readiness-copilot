@@ -1,6 +1,6 @@
 "use client";
 
-import {useParams} from "next/navigation";
+import {useParams, useRouter} from "next/navigation";
 import {useCallback, useEffect, useState} from "react";
 import {toast} from "sonner";
 import {
@@ -10,15 +10,19 @@ import {
 import {Loading} from "@/components/ui/loading";
 import {ApiError, apiFetch} from "@/lib/api";
 import type {PublicUploadContext, PublicUploadRequirement} from "@/lib/types";
+import {isUploadWorkflowComplete} from "@/lib/upload-completion";
 
 export default function SecureUploadPage() {
   const {token} = useParams<{token: string}>();
+  const router = useRouter();
   const [context, setContext] = useState<PublicUploadContext | null>(null);
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [busyRequirementId, setBusyRequirementId] = useState<string | null>(null);
   const [transientStates, setTransientStates] = useState<Record<string, UploadTransientState>>({});
   const [bulkBusy, setBulkBusy] = useState(false);
   const [submitBusy, setSubmitBusy] = useState(false);
+  const [submissionStarted, setSubmissionStarted] = useState(false);
+  const [redirectSeconds, setRedirectSeconds] = useState<number | null>(null);
 
   const fetchContext = useCallback(async (statusOnly = false) => {
     const suffix = statusOnly ? "/status" : "";
@@ -47,6 +51,19 @@ export default function SecureUploadPage() {
       window.clearInterval(timer);
     };
   }, [fetchContext]);
+
+  const workflowComplete = Boolean(context && isUploadWorkflowComplete(context));
+  useEffect(() => {
+    if (!submissionStarted || !workflowComplete) return;
+    const initial = window.setTimeout(() => setRedirectSeconds(5), 0);
+    const interval = window.setInterval(() => setRedirectSeconds(value => value == null ? 5 : Math.max(0, value - 1)), 1000);
+    const timeout = window.setTimeout(() => router.push("/dashboard"), 5000);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(interval);
+      window.clearTimeout(timeout);
+    };
+  }, [router, submissionStarted, workflowComplete]);
 
   async function upload(requirement: PublicUploadRequirement, file: File) {
     setBusyRequirementId(requirement.id);
@@ -104,6 +121,7 @@ export default function SecureUploadPage() {
         false,
       );
       toast.success(`${batch.document_count} ${batch.document_count === 1 ? "document" : "documents"} submitted for extraction`);
+      setSubmissionStarted(true);
       setContext(await fetchContext(true));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Submission failed");
@@ -132,5 +150,6 @@ export default function SecureUploadPage() {
     bulkBusy={bulkBusy}
     onSubmit={() => void submitForExtraction()}
     submitBusy={submitBusy}
+    completionRedirectSeconds={redirectSeconds}
   />;
 }

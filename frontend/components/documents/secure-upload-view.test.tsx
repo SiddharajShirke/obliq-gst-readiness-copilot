@@ -95,4 +95,47 @@ describe("secure upload view", () => {
     expect(html).toContain("1 of 3 processed");
     expect(html).toContain("disabled");
   });
+
+  it("explains that redirect follows secure submission while extraction continues", () => {
+    const html = renderToStaticMarkup(
+      <SecureUploadView
+        context={{
+          firm: {name: "OBLIQ Demo CA"},
+          client: {business_name: "Raj Traders"},
+          application: {period_label: "April 2026", due_date: null},
+          checklist: [{
+            id: "sales-register",
+            label: "Sales Register",
+            required: true,
+            status: "received",
+            upload_status: "uploaded",
+            processing_status: "processing",
+          }],
+          allowed_extensions: ["pdf"],
+          maximum_size_mb: 10,
+          ready_to_submit_count: 0,
+          latest_submission_batch: {
+            id: "batch-1",
+            status: "processing",
+            document_count: 1,
+            completed_count: 0,
+            failed_count: 0,
+          },
+        }}
+        busyRequirementId={null}
+        transientStates={{}}
+        onUpload={() => undefined}
+        onBulkFolder={() => undefined}
+        onBulkZip={() => undefined}
+        bulkBusy={false}
+        onSubmit={() => undefined}
+        submitBusy={false}
+        completionRedirectSeconds={5}
+      />,
+    );
+
+    expect(html).toContain("All required documents were submitted securely");
+    expect(html).toContain("Extraction continues in the background");
+    expect(html).not.toContain("processed successfully");
+  });
 });

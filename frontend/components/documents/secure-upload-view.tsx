@@ -19,13 +19,14 @@ type Props = {
   bulkBusy: boolean;
   onSubmit: () => void;
   submitBusy: boolean;
+  completionRedirectSeconds?: number | null;
 };
 
 function displayExtensions(extensions: string[]): string {
   return extensions.map(extension => extension.toUpperCase()).join(", ");
 }
 
-export function SecureUploadView({context, busyRequirementId, transientStates, onUpload, onBulkFolder, onBulkZip, bulkBusy, onSubmit, submitBusy}: Props) {
+export function SecureUploadView({context, busyRequirementId, transientStates, onUpload, onBulkFolder, onBulkZip, bulkBusy, onSubmit, submitBusy, completionRedirectSeconds}: Props) {
   const complete = context.checklist.every(item => item.upload_status === "uploaded");
   const batch = context.latest_submission_batch;
   const submitCount = context.ready_to_submit_count;
@@ -155,11 +156,13 @@ export function SecureUploadView({context, busyRequirementId, transientStates, o
                 style={{width: `${batch.document_count ? Math.round(((batch.completed_count + batch.failed_count) / batch.document_count) * 100) : 0}%`}}
               />
             </div>
+            {batch.failed_count > 0 && <p className="mt-3 rounded-xl border border-[var(--obliq-danger-border)] bg-[var(--obliq-danger-soft)] p-3 text-xs leading-5 text-[var(--obliq-danger-ink)]">One or more documents could not be extracted. The successful documents remain available; ask the CA to retry the failed document after reviewing its processing error.</p>}
           </section>}
           {complete && <div className="mt-6 rounded-2xl bg-emerald-50 p-5 text-sm text-emerald-800">
             <div className="flex items-center gap-2 font-bold"><Check size={18}/>All required categories uploaded</div>
             <p className="mt-2 leading-6">Your files are stored securely and are awaiting processing by the OBLIQ workflow.</p>
           </div>}
+          {completionRedirectSeconds != null && <div className="mt-4 rounded-2xl border border-[var(--obliq-success-border)] bg-[var(--obliq-success-soft)] p-5 text-sm text-[var(--obliq-success-ink)]"><strong className="block">All required documents were submitted securely.</strong><span className="mt-2 block">Extraction continues in the background. Returning to the OBLIQ Overview in {completionRedirectSeconds} seconds so you can continue the workflow.</span></div>}
           <p className="mt-6 text-xs leading-5 text-[#6b6562]">Upload status confirms safe storage only. It does not mean extraction or CA review is complete.</p>
         </div>
       </Card>
