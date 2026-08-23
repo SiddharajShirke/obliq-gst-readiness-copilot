@@ -38,4 +38,9 @@ describe("semantic dark theme", () => {
     expect(css).toMatch(/\.lucide\s*\{[^}]*color:\s*currentColor/i);
     expect(css).toMatch(/\.lucide\s*\{[^}]*stroke:\s*currentColor/i);
   });
+
+  it("disables landing motion when the user prefers reduced motion", () => {
+    expect(css).toContain(".landing-reveal");
+    expect(css).toMatch(/prefers-reduced-motion:\s*reduce[\s\S]*\.landing-reveal/);
+  });
 });

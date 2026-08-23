@@ -14,12 +14,12 @@
   --obliq-success: #16833a;
   --obliq-warning: #b7791f;
   --obliq-danger: #c53b3b;
-  --obliq-action: #191515;
-  --obliq-action-hover: #2b2626;
+  --obliq-action: #2563eb;
+  --obliq-action-hover: #1d4ed8;
   --obliq-action-ink: #ffffff;
   --obliq-interactive-hover: #f5f3f0;
-  --obliq-interactive-active: #191515;
-  --obliq-interactive-active-ink: #ffffff;
+  --obliq-interactive-active: #dbeafe;
+  --obliq-interactive-active-ink: #1e3a8a;
   --obliq-nav-active: #e8f1fa;
   --obliq-nav-active-ink: #191515;
   --obliq-segment-active: #ffffff;
@@ -96,6 +96,11 @@ body {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+:root:not(.dark) a[href="/dashboard/clients/new"] {
+  background: var(--obliq-action);
+  color: var(--obliq-action-ink);
+}
+
 .dark .bg-white,
 .dark .bg-white\/95,
 .dark .bg-white\/88,
@@ -161,7 +166,38 @@ button { cursor: pointer; }
   0%, 100% { opacity: .55; transform: scale(1); }
   50% { opacity: .85; transform: scale(1.04); }
 }
+@keyframes landingReveal {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 .animate-pulse-soft { animation: pulseSoft 7s ease-in-out infinite; }
+.landing-reveal { animation: landingReveal .7s cubic-bezier(.22, 1, .36, 1) both; }
+.landing-delay-1 { animation-delay: 80ms; }
+.landing-delay-2 { animation-delay: 160ms; }
+.landing-delay-3 { animation-delay: 240ms; }
+.landing-delay-4 { animation-delay: 320ms; }
+.landing-hero-grid {
+  background-image:
+    radial-gradient(circle at 50% 12%, rgba(255, 255, 255, .32), transparent 34%),
+    linear-gradient(rgba(25, 21, 21, .035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(25, 21, 21, .035) 1px, transparent 1px);
+  background-size: auto, 42px 42px, 42px 42px;
+}
+.dark .landing-hero-grid {
+  background-image:
+    radial-gradient(circle at 50% 12%, rgba(96, 165, 250, .13), transparent 36%),
+    linear-gradient(rgba(148, 163, 184, .045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, .045) 1px, transparent 1px);
+}
+.obliq-progress-current { box-shadow: 0 0 0 3px var(--obliq-focus-ring); }
+.obliq-progress-fill { will-change: width; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .animate-pulse-soft { animation: none; }
+  .landing-reveal { animation: none; }
+  .obliq-progress-fill { transition: none; }
+}
 
 @media (max-width: 768px) {
   .obliq-container { width: min(100% - 20px, 1180px); }

@@ -11,5 +11,7 @@ describe("Alerts Dashboard", () => {
     expect(html).toContain("Exact Books vs GSTR-2B evidence");
     expect(html).toContain("AI Assistance");
     expect(html).toContain("Final GST and ITC treatment remains subject to CA verification");
+    expect(html).toContain("--obliq-surface-raised");
+    expect(html).not.toContain("--obliq-soft");
   });
 });
