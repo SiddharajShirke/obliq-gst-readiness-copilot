@@ -16,6 +16,18 @@ baked into the same deployment image). Apply `202608230003_application_scoped_ra
 before enabling the assistant so `document_chunks`, `assistant_messages`, and the scoped
 pgvector RPC are available.
 
+Newly approved documents are indexed automatically. Retained documents approved before
+Phase 4 can be indexed idempotently from the deployed backend environment:
+
+```powershell
+cd backend
+python -m scripts.backfill_application_rag --application-id <application-uuid>
+python -m scripts.backfill_application_rag --all
+```
+
+The script uses the normal environment-configured Supabase repository and embedding model.
+It prints counts only; it does not print document text, credentials, signed URLs, or tokens.
+
 Example:
 
 ```env
