@@ -1,15 +1,18 @@
+import asyncio
 from io import BytesIO
 
 import pandas as pd
+import pytest
 from reportlab.pdfgen import canvas
 
+from app.config import Settings
 from app.services.document_processing.classifier import classify_document
 from app.services.document_processing.parsers import (
     extract_invoice_from_text,
     parse_tabular_document,
     read_pdf_text,
 )
-from app.services.document_processing.processor import resolve_demo_data_root
+from app.services.document_processing.processor import DocumentProcessor, resolve_demo_data_root
 
 
 def test_classifier_recognizes_register_and_gstr2b() -> None:
@@ -98,3 +101,129 @@ def test_resolve_demo_data_root_supports_container_layout(tmp_path) -> None:
     demo_dir.mkdir()
 
     assert resolve_demo_data_root(module_file=module_file, working_directory=app_root) == demo_dir
+
+
+def test_deterministic_document_classification_overrides_ai_row_taxonomy() -> None:
+    rows = DocumentProcessor._normalize_rows(
+        [
+            {
+                "document_type": "purchase_invoice",
+                "document_number": "PR-1",
+                "source_document_id": "model-invented-id",
+            }
+        ],
+        document_id="real-document-id",
+        document_type="purchase_register",
+    )
+
+    assert rows[0]["document_type"] == "purchase_register"
+    assert rows[0]["source_document_id"] == "real-document-id"
+
+
+@pytest.mark.asyncio
+async def test_document_processors_share_one_heavy_work_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two submissions must not run their heavy document graphs concurrently."""
+    from app.services.document_processing import processor as processor_module
+
+    active = 0
+    peak = 0
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+
+    class FakeGraph:
+        async def ainvoke(self, state: dict[str, object]) -> dict[str, object]:
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            if active == 2:
+                both_started.set()
+            try:
+                await asyncio.wait_for(release.wait(), timeout=0.1)
+            except TimeoutError:
+                pass
+            finally:
+                active -= 1
+            return {**state, "status": "complete"}
+
+    class FakeStore:
+        async def update_row(
+            self, table: str, row_id: str, data: dict[str, object]
+        ) -> dict[str, object]:
+            return {"id": row_id, **data}
+
+    graph = FakeGraph()
+    monkeypatch.setattr(processor_module, "build_document_graph", lambda _: graph)
+    settings = Settings(
+        app_env="test",
+        whatsapp_provider="mock",
+        heavy_processing_concurrency=1,
+        _env_file=None,
+    )
+    first = processor_module.DocumentProcessor(FakeStore(), settings)  # type: ignore[arg-type]
+    second = processor_module.DocumentProcessor(FakeStore(), settings)  # type: ignore[arg-type]
+
+    tasks = [
+        asyncio.create_task(first.process("document-a")),
+        asyncio.create_task(second.process("document-b")),
+    ]
+    await asyncio.sleep(0.15)
+    release.set()
+    await asyncio.gather(*tasks)
+
+    assert both_started.is_set() is False
+    assert peak == 1
+
+
+@pytest.mark.asyncio
+async def test_live_ai_rate_limit_keeps_deterministic_evidence_for_ca_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.document_processing import processor as processor_module
+
+    class FakeStore:
+        async def get_row(self, table: str, row_id: str) -> dict[str, object] | None:
+            if table == "applications":
+                return {"id": row_id, "period_label": "August 2026"}
+            return None
+
+    async def rate_limited(*args: object, **kwargs: object) -> dict[str, object]:
+        raise RuntimeError("provider rate limited")
+
+    monkeypatch.setattr(processor_module, "complete_groq_json", rate_limited)
+    monkeypatch.setattr(
+        processor_module,
+        "read_pdf_text",
+        lambda _: "Invoice Number: DN-1\nTaxable Value: 1000\nInvoice Total: 1180",
+    )
+    monkeypatch.setattr(processor_module, "parse_normalized_pdf_tables", lambda *a, **k: None)
+    settings = Settings(
+        app_env="test",
+        whatsapp_provider="mock",
+        ai_mode="live",
+        groq_api_key="test",
+        groq_heavy_model="test-groq",
+        nvidia_api_key="test",
+        nvidia_small_model="test-nvidia",
+        _env_file=None,
+    )
+    processor = processor_module.DocumentProcessor(FakeStore(), settings)  # type: ignore[arg-type]
+
+    result = await processor.parse_and_extract(
+        {
+            "document": {
+                "id": "document-id",
+                "application_id": "application-id",
+                "original_name": "05_Credit_and_Debit_Notes.pdf",
+                "mime_type": "application/pdf",
+            },
+            "document_type": "credit_debit_notes",
+            "content": b"%PDF synthetic",
+        }
+    )
+
+    assert result["provider"] == "deterministic"
+    assert result["task_type"] == "text_parse_ai_unavailable"
+    assert result["fallback_reason"] == "groq_RuntimeError"
+    assert result["invoice_rows"][0]["document_number"] == "DN-1"

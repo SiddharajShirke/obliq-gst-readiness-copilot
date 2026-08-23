@@ -57,3 +57,100 @@ async def test_ingested_text_is_retrievable_with_citation_metadata() -> None:
 
     assert results
     assert results[0]["metadata"]["title"] == "Demo GSTR-2B Guidance"
+
+
+@pytest.mark.asyncio
+async def test_application_retrieval_uses_guarded_async_embeddings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RAG queries must share the heavy-work gate instead of blocking inline."""
+    from app.services.rag import retrieval
+
+    sync_calls = 0
+    async_calls = 0
+
+    def inline_embedding(*args: object, **kwargs: object) -> list[list[float]]:
+        nonlocal sync_calls
+        sync_calls += 1
+        return [[0.0] * 384]
+
+    async def guarded_embedding(*args: object, **kwargs: object) -> list[list[float]]:
+        nonlocal async_calls
+        async_calls += 1
+        return [[0.0] * 384]
+
+    class FakeStore:
+        async def rpc(
+            self, function_name: str, params: dict[str, object]
+        ) -> list[dict[str, object]]:
+            return []
+
+    monkeypatch.setattr(retrieval, "embed_texts", inline_embedding, raising=False)
+    monkeypatch.setattr(
+        retrieval, "embed_texts_async", guarded_embedding, raising=False
+    )
+
+    await retrieval.retrieve_application_documents(
+        FakeStore(),  # type: ignore[arg-type]
+        get_settings(),
+        question="Summarize the purchase register",
+        firm_id="firm-1",
+        application_id="application-1",
+    )
+
+    assert async_calls == 1
+    assert sync_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_knowledge_ingestion_uses_guarded_async_embeddings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.rag import ingestion
+
+    sync_calls = 0
+    async_calls = 0
+
+    def inline_embedding(*args: object, **kwargs: object) -> list[list[float]]:
+        nonlocal sync_calls
+        sync_calls += 1
+        return [[0.0] * 384]
+
+    async def guarded_embedding(
+        texts: list[str], *args: object, **kwargs: object
+    ) -> list[list[float]]:
+        nonlocal async_calls
+        async_calls += 1
+        return [[0.0] * 384 for _ in texts]
+
+    class FakeStore:
+        async def list_rows(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+            return []
+
+        async def insert_row(
+            self, table: str, row: dict[str, object]
+        ) -> dict[str, object]:
+            return {"id": f"{table}-1", **row}
+
+        async def update_row(
+            self, table: str, row_id: str, row: dict[str, object]
+        ) -> dict[str, object]:
+            return {"id": row_id, **row}
+
+    monkeypatch.setattr(ingestion, "embed_texts", inline_embedding, raising=False)
+    monkeypatch.setattr(
+        ingestion, "embed_texts_async", guarded_embedding, raising=False
+    )
+
+    await ingestion.ingest_text(
+        FakeStore(),  # type: ignore[arg-type]
+        get_settings(),
+        text="GST reconciliation evidence for CA review.",
+        title="GST guidance",
+        source_type="official_gst",
+        source_url=None,
+        firm_id=None,
+    )
+
+    assert async_calls == 1
+    assert sync_calls == 0

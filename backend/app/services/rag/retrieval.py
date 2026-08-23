@@ -7,7 +7,7 @@ from typing import Any
 
 from app.config import Settings
 from app.repositories.base import DataStore
-from app.services.rag.embeddings import embed_texts
+from app.services.rag.embeddings import embed_texts_async
 
 
 def reciprocal_rank_fusion(
@@ -41,7 +41,7 @@ async def retrieve_knowledge(
     firm_id: str,
     source_type: str | None = None,
 ) -> list[dict[str, Any]]:
-    query_embedding = embed_texts([question], settings)[0]
+    query_embedding = (await embed_texts_async([question], settings))[0]
     vector_results = await store.rpc(
         "match_knowledge_chunks",
         {
@@ -72,7 +72,7 @@ async def retrieve_application_documents(
     firm_id: str,
     application_id: str,
 ) -> list[dict[str, Any]]:
-    query_embedding = embed_texts([question], settings)[0]
+    query_embedding = (await embed_texts_async([question], settings))[0]
     rows = await store.rpc(
         "match_application_document_chunks",
         {

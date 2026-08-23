@@ -142,6 +142,86 @@ async def test_approved_extraction_is_indexed_with_row_provenance_idempotently()
 
 
 @pytest.mark.asyncio
+async def test_document_indexing_uses_guarded_async_embeddings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.rag import document_indexing
+
+    sync_calls = 0
+    async_calls = 0
+
+    def inline_embedding(*args: object, **kwargs: object) -> list[list[float]]:
+        nonlocal sync_calls
+        sync_calls += 1
+        return [[0.0] * 384]
+
+    async def guarded_embedding(
+        texts: list[str], *args: object, **kwargs: object
+    ) -> list[list[float]]:
+        nonlocal async_calls
+        async_calls += 1
+        return [[0.0] * 384 for _ in texts]
+
+    document = {
+        "id": "document-1",
+        "firm_id": "firm-1",
+        "client_id": "client-1",
+        "application_id": "application-1",
+        "demo_session_id": None,
+        "document_type": "purchase_register",
+        "processing_status": "approved",
+        "original_name": "Purchase Register.pdf",
+    }
+
+    class FakeStore:
+        async def get_row(self, table: str, row_id: str) -> dict[str, object] | None:
+            return document if table == "documents" else None
+
+        async def list_rows(
+            self, table: str, *args: object, **kwargs: object
+        ) -> list[dict[str, object]]:
+            if table == "document_extractions":
+                return [{"id": "extraction-1", "review_status": "approved"}]
+            return []
+
+        async def insert_row(
+            self, table: str, row: dict[str, object]
+        ) -> dict[str, object]:
+            return {"id": "chunk-1", **row}
+
+        async def delete_row(self, table: str, row_id: str) -> None:
+            return None
+
+    async def source_chunks(*args: object, **kwargs: object) -> list[dict[str, object]]:
+        return [{
+            "content": "Invoice PR/001 taxable value 1000",
+            "page_number": 1,
+            "sheet_name": None,
+            "row_start": None,
+            "row_end": None,
+            "section": "PR/001",
+            "metadata": {"title": "Purchase Register.pdf"},
+        }]
+
+    monkeypatch.setattr(document_indexing, "_source_chunks", source_chunks)
+    monkeypatch.setattr(
+        document_indexing, "embed_texts", inline_embedding, raising=False
+    )
+    monkeypatch.setattr(
+        document_indexing, "embed_texts_async", guarded_embedding, raising=False
+    )
+
+    await document_indexing.index_document(
+        FakeStore(),  # type: ignore[arg-type]
+        get_settings(),
+        "document-1",
+    )
+
+    assert async_calls == 1
+    assert sync_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_ground_truth_document_is_never_indexed() -> None:
     from app.services.rag.document_indexing import index_document
 

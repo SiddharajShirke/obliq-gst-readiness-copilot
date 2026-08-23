@@ -21,8 +21,18 @@ type Props = {
 
 function QrAction({value, label}: {value: string; label: string}) {
   return <div className="rounded-3xl border border-[var(--obliq-border)] bg-[var(--obliq-surface-raised)] p-5">
-    <div className="mx-auto grid w-fit place-items-center rounded-2xl bg-white p-4">
-      <QRCode value={value} size={190} aria-label={label}/>
+    <div
+      data-qr-scan-surface="true"
+      className="mx-auto grid w-fit place-items-center rounded-2xl bg-white p-5 shadow-sm ring-4 ring-white"
+    >
+      <QRCode
+        value={value}
+        size={190}
+        bgColor="#FFFFFF"
+        fgColor="#0F172A"
+        level="M"
+        aria-label={label}
+      />
     </div>
   </div>;
 }

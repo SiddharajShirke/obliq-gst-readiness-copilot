@@ -26,3 +26,14 @@ export async function bootstrapAuthenticatedWorkspace(
   }
   return response.json() as Promise<WorkspaceBootstrap>;
 }
+
+export async function tryBootstrapAuthenticatedWorkspace(
+  accessToken: string,
+  request: typeof fetch = fetch,
+): Promise<WorkspaceBootstrap | null> {
+  try {
+    return await bootstrapAuthenticatedWorkspace(accessToken, request);
+  } catch {
+    return null;
+  }
+}

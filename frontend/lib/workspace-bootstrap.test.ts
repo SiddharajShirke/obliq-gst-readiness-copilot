@@ -1,6 +1,7 @@
 import {describe, expect, it, vi} from "vitest";
 
 import {bootstrapAuthenticatedWorkspace} from "./workspace-bootstrap";
+import * as workspaceBootstrap from "./workspace-bootstrap";
 
 describe("workspace bootstrap", () => {
   it("uses the authenticated session once and returns the tenant demo workspace", async () => {
@@ -26,5 +27,20 @@ describe("workspace bootstrap", () => {
 
     await expect(bootstrapAuthenticatedWorkspace("access-token", request))
       .rejects.toThrow("Workspace bootstrap failed");
+  });
+
+  it("preserves an authenticated session during a temporary backend outage", async () => {
+    const attempt = (workspaceBootstrap as typeof workspaceBootstrap & {
+      tryBootstrapAuthenticatedWorkspace?: (
+        accessToken: string,
+        request: typeof fetch,
+      ) => Promise<unknown>;
+    }).tryBootstrapAuthenticatedWorkspace;
+    expect(attempt).toBeTypeOf("function");
+    if (!attempt) return;
+
+    const request = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await expect(attempt("access-token", request)).resolves.toBeNull();
   });
 });

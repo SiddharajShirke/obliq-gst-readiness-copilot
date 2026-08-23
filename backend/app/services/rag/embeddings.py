@@ -10,6 +10,7 @@ from functools import lru_cache
 from typing import Protocol
 
 from app.config import Settings
+from app.services.resource_control import heavy_processing_gate
 
 
 class EmbeddingProvider(Protocol):
@@ -81,7 +82,13 @@ def embed_texts(texts: list[str], settings: Settings) -> list[list[float]]:
     return get_embedding_provider(settings).embed_texts(texts)
 
 
+async def embed_texts_async(texts: list[str], settings: Settings) -> list[list[float]]:
+    """Run local vector inference off-loop and within the shared memory gate."""
+    gate = heavy_processing_gate(settings.heavy_processing_concurrency)
+    async with gate.slot():
+        return await asyncio.to_thread(embed_texts, texts, settings)
+
+
 async def warm_embedding_provider(settings: Settings) -> None:
-    """Load and exercise the configured embedder before requests are accepted."""
-    provider = await asyncio.to_thread(get_embedding_provider, settings)
-    await asyncio.to_thread(provider.embed_texts, ["OBLIQ embedding warmup"])
+    """Load and exercise the configured embedder through the guarded async path."""
+    await embed_texts_async(["OBLIQ embedding warmup"], settings)

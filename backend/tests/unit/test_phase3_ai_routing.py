@@ -183,6 +183,7 @@ async def test_processing_failure_never_leaves_document_stuck_in_processing() ->
         await processor.process("document-id")
 
     assert store.updates == [
+        ("documents", "document-id", {"processing_status": "queued"}),
         (
             "documents",
             "document-id",
@@ -214,6 +215,7 @@ async def test_successful_retry_clears_previous_processing_error() -> None:
 
     assert result["status"] == "awaiting_human_review"
     assert store.updates == [
+        ("documents", "document-id", {"processing_status": "queued"}),
         ("documents", "document-id", {"processing_error": None})
     ]
 
