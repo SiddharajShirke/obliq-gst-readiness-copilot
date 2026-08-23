@@ -170,6 +170,7 @@ class MemoryStore:
             "knowledge_chunks": [],
             "document_chunks": [],
             "assistant_messages": [],
+            "assistant_action_proposals": [],
             "alerts": [],
             "audit_events": [],
             "workflow_runs": [],
