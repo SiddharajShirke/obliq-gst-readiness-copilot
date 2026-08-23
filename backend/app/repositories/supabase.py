@@ -155,12 +155,18 @@ class SupabaseStore:
                     "firm_id": None,
                     "role": None,
                     "email": user.email or "",
+                    "full_name": str(
+                        (getattr(user, "user_metadata", None) or {}).get("full_name") or ""
+                    ),
                 }
             return {
                 "id": str(user.id),
                 "firm_id": memberships[0]["firm_id"],
                 "role": memberships[0]["role"],
                 "email": user.email or "",
+                "full_name": str(
+                    (getattr(user, "user_metadata", None) or {}).get("full_name") or ""
+                ),
             }
 
         return await asyncio.to_thread(run)

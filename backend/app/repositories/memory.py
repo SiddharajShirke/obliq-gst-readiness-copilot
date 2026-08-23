@@ -26,10 +26,6 @@ DEMO_REVIEWER_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 
 CLIENT_IDS = {
     "raj": "20000000-0000-0000-0000-000000000001",
-    "abc": "20000000-0000-0000-0000-000000000002",
-    "nova": "20000000-0000-0000-0000-000000000003",
-    "city": "20000000-0000-0000-0000-000000000004",
-    "mehta": "20000000-0000-0000-0000-000000000005",
 }
 
 _LEXICAL_STOP_WORDS = {
@@ -174,6 +170,7 @@ class MemoryStore:
             "alerts": [],
             "audit_events": [],
             "workflow_runs": [],
+            "guided_demo_runs": [],
         }
         scenarios = [
             (
@@ -186,55 +183,7 @@ class MemoryStore:
                 "monthly",
                 "Raj Malhotra",
                 "+919810000001",
-                "purchase register missing",
-            ),
-            (
-                CLIENT_IDS["abc"],
-                "ABC Electronics",
-                "ABC Electronics Private Limited",
-                "29ABCDE1234F1Z3",
-                "Karnataka",
-                "Electronics",
-                "monthly",
-                "Kavya Rao",
-                "+919810000002",
-                "duplicate and wrong-period invoice",
-            ),
-            (
-                CLIENT_IDS["nova"],
-                "Nova Services",
-                "Nova Professional Services LLP",
-                "07NOVAS1234L1Z4",
-                "Delhi",
-                "Professional services",
-                "monthly",
-                "Rohan Mehta",
-                "+919810000003",
-                "ready for CA review",
-            ),
-            (
-                CLIENT_IDS["city"],
-                "City Retail",
-                "City Retail Private Limited",
-                "24CITYR1234P1Z2",
-                "Gujarat",
-                "Retail",
-                "quarterly",
-                "Neha Shah",
-                "+919810000004",
-                "GSTR-2B mismatch",
-            ),
-            (
-                CLIENT_IDS["mehta"],
-                "Mehta Consulting",
-                "Mehta Consulting",
-                "27MEHTA1234C1Z6",
-                "Maharashtra",
-                "Consulting",
-                "monthly",
-                "Arjun Mehta",
-                "+919810000005",
-                "low-confidence scan",
+                "guided_demo_template",
             ),
         ]
         for (
@@ -276,31 +225,7 @@ class MemoryStore:
                 "30000000-0000-0000-0000-000000000001",
                 CLIENT_IDS["raj"],
                 "April 2026",
-                "partially_received",
-            ),
-            (
-                "30000000-0000-0000-0000-000000000002",
-                CLIENT_IDS["abc"],
-                "April 2026",
-                "validation_review",
-            ),
-            (
-                "30000000-0000-0000-0000-000000000003",
-                CLIENT_IDS["nova"],
-                "April 2026",
-                "ready_for_ca_review",
-            ),
-            (
-                "30000000-0000-0000-0000-000000000004",
-                CLIENT_IDS["city"],
-                "Q1 2026-27",
-                "reconciliation_review",
-            ),
-            (
-                "30000000-0000-0000-0000-000000000005",
-                CLIENT_IDS["mehta"],
-                "April 2026",
-                "extraction_review",
+                "not_started",
             ),
         ]
         for app_id, client_id, label, status in seeded_apps:
@@ -509,6 +434,118 @@ class MemoryStore:
         return await self.insert_row(table, data)
 
     async def rpc(self, function_name: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        if function_name == "bootstrap_user_workspace":
+            async with self.lock:
+                user_id = str(params["p_user_id"])
+                membership = next(
+                    (
+                        row
+                        for row in self.tables["firm_members"]
+                        if str(row.get("user_id")) == user_id
+                    ),
+                    None,
+                )
+                now = self._now()
+                if membership:
+                    firm_id = str(membership["firm_id"])
+                else:
+                    firm_id = str(uuid.uuid4())
+                    email = str(params.get("p_email") or "CA")
+                    full_name = str(params.get("p_full_name") or "").strip()
+                    self.tables["profiles"].append(
+                        {
+                            "id": user_id,
+                            "full_name": full_name,
+                            "email": email,
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                    )
+                    self.tables["firms"].append(
+                        {
+                            "id": firm_id,
+                            "name": f"{full_name or email.split('@')[0]} GST Workspace",
+                            "slug": f"workspace-{user_id.replace('-', '')[:12]}",
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                    )
+                    self.tables["firm_members"].append(
+                        {
+                            "id": str(uuid.uuid4()),
+                            "firm_id": firm_id,
+                            "user_id": user_id,
+                            "role": "firm_admin",
+                            "created_at": now,
+                        }
+                    )
+                template = next(
+                    (
+                        row
+                        for row in self.tables["clients"]
+                        if str(row.get("firm_id")) == firm_id
+                        and row.get("demo_scenario") == "guided_demo_template"
+                    ),
+                    None,
+                )
+                if not template:
+                    template = {
+                        "id": str(uuid.uuid4()),
+                        "firm_id": firm_id,
+                        "business_name": "Raj Traders",
+                        "legal_name": "Raj Traders",
+                        "gstin": "27RAJTR1234A1Z5",
+                        "state": "Maharashtra",
+                        "business_type": "Retail",
+                        "filing_frequency": "monthly",
+                        "contact_name": "Raj Malhotra",
+                        "whatsapp_phone": "+919810000001",
+                        "preferred_language": "English",
+                        "whatsapp_consent": True,
+                        "assigned_preparer_id": user_id,
+                        "reviewer_id": user_id,
+                        "demo_scenario": "guided_demo_template",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                    self.tables["clients"].append(template)
+                application = next(
+                    (
+                        row
+                        for row in self.tables["applications"]
+                        if str(row.get("client_id")) == str(template["id"])
+                        and not row.get("demo_session_id")
+                    ),
+                    None,
+                )
+                if not application:
+                    application = {
+                        "id": str(uuid.uuid4()),
+                        "firm_id": firm_id,
+                        "client_id": template["id"],
+                        "application_type": "gst_readiness",
+                        "financial_year": "2026-27",
+                        "period_label": "April 2026",
+                        "period_start": "2026-04-01",
+                        "period_end": "2026-04-30",
+                        "filing_frequency": "monthly",
+                        "due_date": "2026-05-20",
+                        "status": "not_started",
+                        "assigned_preparer_id": user_id,
+                        "reviewer_id": user_id,
+                        "demo_session_id": None,
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                    self.tables["applications"].append(application)
+                    self._add_requirements(str(application["id"]), all_missing=True)
+                return [
+                    {
+                        "firm_id": firm_id,
+                        "demo_client_id": str(template["id"]),
+                        "demo_application_id": str(application["id"]),
+                    }
+                ]
         if function_name == "submit_document_batch":
             async with self.lock:
                 link = next(

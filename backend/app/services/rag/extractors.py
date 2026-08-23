@@ -37,6 +37,8 @@ def extract_knowledge_bytes(content: bytes, filename: str) -> ExtractedKnowledge
         from docx import Document
 
         document = Document(io.BytesIO(content))
-        paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
+        paragraphs = [
+            paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()
+        ]
         return ExtractedKnowledge("\n\n".join(paragraphs))
     raise ValueError(f"Unsupported knowledge file type: {extension}")

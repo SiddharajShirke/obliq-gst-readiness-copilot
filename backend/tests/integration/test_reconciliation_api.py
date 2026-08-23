@@ -10,7 +10,7 @@ from app.repositories import get_store
 
 client = TestClient(app)
 AUTH = {"Authorization": "Bearer demo-admin-token"}
-APP_ID = "30000000-0000-0000-0000-000000000004"
+RAJ_CLIENT_ID = "20000000-0000-0000-0000-000000000001"
 
 
 def make_purchase_xlsx() -> bytes:
@@ -42,8 +42,22 @@ def make_purchase_xlsx() -> bytes:
 
 
 def test_reconciliation_and_readiness_exports() -> None:
+    created = client.post(
+        f"/api/v1/clients/{RAJ_CLIENT_ID}/applications",
+        headers=AUTH,
+        json={
+            "financial_year": "2026-27",
+            "period_label": "April 2026 export test",
+            "period_start": "2026-04-01",
+            "period_end": "2026-04-30",
+            "filing_frequency": "monthly",
+            "due_date": "2026-05-20",
+        },
+    )
+    assert created.status_code == 201, created.text
+    app_id = created.json()["id"]
     purchase = client.post(
-        f"/api/v1/applications/{APP_ID}/documents",
+        f"/api/v1/applications/{app_id}/documents",
         headers=AUTH,
         data={"requirement_type": "purchase_register"},
         files={
@@ -57,10 +71,10 @@ def test_reconciliation_and_readiness_exports() -> None:
     assert purchase.status_code == 201
 
     store = get_store()
-    purchase_records = asyncio.run(store.list_rows("invoice_records", {"application_id": APP_ID}))
+    purchase_records = asyncio.run(store.list_rows("invoice_records", {"application_id": app_id}))
     for row in purchase_records:
         asyncio.run(store.update_row("invoice_records", row["id"], {"review_status": "approved"}))
-    validation = client.post(f"/api/v1/applications/{APP_ID}/validate", headers=AUTH)
+    validation = client.post(f"/api/v1/applications/{app_id}/validate", headers=AUTH)
     assert validation.status_code == 200, validation.text
     for finding in validation.json()["findings"]:
         resolved = client.post(
@@ -102,7 +116,7 @@ def test_reconciliation_and_readiness_exports() -> None:
         ]
     }
     gstr = client.post(
-        f"/api/v1/applications/{APP_ID}/reconciliation/gstr2b",
+        f"/api/v1/applications/{app_id}/reconciliation/gstr2b",
         headers=AUTH,
         files={
             "file": ("GSTR2B_April.json", json.dumps(gstr_payload).encode(), "application/json")
@@ -111,19 +125,19 @@ def test_reconciliation_and_readiness_exports() -> None:
     assert gstr.status_code == 201
     assert gstr.json()["document_type"] == "gstr2b"
 
-    reconciliation = client.post(f"/api/v1/applications/{APP_ID}/reconcile", headers=AUTH)
+    reconciliation = client.post(f"/api/v1/applications/{app_id}/reconcile", headers=AUTH)
     assert reconciliation.status_code == 200
     assert reconciliation.json()["summary"]["exact_match"] == 1
     assert reconciliation.json()["summary"]["value_mismatch"] == 1
     assert reconciliation.json()["summary"]["gstr2b_only"] == 1
 
-    readiness = client.get(f"/api/v1/applications/{APP_ID}/readiness-summary", headers=AUTH)
+    readiness = client.get(f"/api/v1/applications/{app_id}/readiness-summary", headers=AUTH)
     assert readiness.status_code == 200
     assert readiness.json()["reconciliation"]["summary"]["exact_match"] == 1
     assert "subject to CA verification" in readiness.json()["disclaimer"]
     assert readiness.json()["readiness"]["ready_for_filing"] is True
 
-    export = client.post(f"/api/v1/applications/{APP_ID}/export", headers=AUTH)
+    export = client.post(f"/api/v1/applications/{app_id}/export", headers=AUTH)
     assert export.status_code == 200
     assert {
         "preparatory_report_pdf",
@@ -134,20 +148,20 @@ def test_reconciliation_and_readiness_exports() -> None:
     }.issubset(export.json())
 
     premature_reconciliation_export = client.post(
-        f"/api/v1/applications/{APP_ID}/reconciliation/export", headers=AUTH
+        f"/api/v1/applications/{app_id}/reconciliation/export", headers=AUTH
     )
     assert premature_reconciliation_export.status_code == 409
     review_required = [
         row["id"] for row in reconciliation.json()["items"] if row["match_status"] != "exact_match"
     ]
     reviewed = client.post(
-        f"/api/v1/applications/{APP_ID}/reconciliation/items/bulk-review",
+        f"/api/v1/applications/{app_id}/reconciliation/items/bulk-review",
         headers=AUTH,
         json={"item_ids": review_required, "action": "mark_reviewed"},
     )
     assert reviewed.status_code == 200, reviewed.text
     reconciliation_export = client.post(
-        f"/api/v1/applications/{APP_ID}/reconciliation/export", headers=AUTH
+        f"/api/v1/applications/{app_id}/reconciliation/export", headers=AUTH
     )
     assert reconciliation_export.status_code == 200, reconciliation_export.text
     assert {
@@ -156,7 +170,7 @@ def test_reconciliation_and_readiness_exports() -> None:
         "reconciliation_export_zip",
     }.issubset(reconciliation_export.json())
     repeated_reconciliation_export = client.post(
-        f"/api/v1/applications/{APP_ID}/reconciliation/export", headers=AUTH
+        f"/api/v1/applications/{app_id}/reconciliation/export", headers=AUTH
     )
     assert repeated_reconciliation_export.status_code == 200
     assert (

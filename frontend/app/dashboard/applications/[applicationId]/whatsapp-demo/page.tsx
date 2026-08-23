@@ -6,6 +6,7 @@ import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {ArrowLeft} from "lucide-react";
 import {toast} from "sonner";
 import {PageHeader} from "@/components/dashboard/page-header";
+import {GuidedDemoStep} from "@/components/guided-demo/guided-demo-step";
 import {Loading} from "@/components/ui/loading";
 import {WhatsAppDemoView} from "@/components/whatsapp/whatsapp-demo-view";
 import {apiFetch} from "@/lib/api";
@@ -13,6 +14,7 @@ import {
   buildDemoAccessHeaders,
   buildDemoContextHeaders,
   isMissingDemoSessionError,
+  loadGuidedDemoState,
   loadPendingWhatsAppDraft,
   loadStoredDemoSession,
   removeStoredDemoSession,
@@ -34,6 +36,7 @@ export default function WhatsAppDemoPage() {
   const [now, setNow] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [guidedActive, setGuidedActive] = useState(false);
 
   const poll = useCallback(async (session: StoredDemoSession) => {
     const value = await apiFetch<WhatsAppDemoStatus>(
@@ -59,6 +62,15 @@ export default function WhatsAppDemoPage() {
     await poll(next);
     return next;
   }, [applicationId, poll]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const timer = window.setTimeout(() => {
+      const guided = loadGuidedDemoState(window.sessionStorage, applicationId);
+      setGuidedActive(guided?.active === true && guided.completed === false);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [applicationId]);
 
   useEffect(() => {
     if (initialized.current || typeof window === "undefined") return;
@@ -221,8 +233,14 @@ export default function WhatsAppDemoPage() {
       eyebrow="VONAGE SANDBOX"
       title={`Live WhatsApp Demo — ${created.base_client_name}`}
       description={`GST Period: ${created.gst_period}`}
-      actions={<Link href={`/dashboard/applications/${applicationId}`} className="inline-flex items-center gap-2 rounded-full border border-[#dcd7d2] bg-white px-5 py-3 text-sm font-semibold"><ArrowLeft size={17}/>GST workspace</Link>}
+      actions={<Link href={`/dashboard/applications/${applicationId}`} className="obliq-focus inline-flex items-center gap-2 rounded-full border border-[var(--obliq-border)] bg-[var(--obliq-surface)] px-5 py-3 text-sm font-semibold"><ArrowLeft size={17}/>GST workspace</Link>}
     />
+    {guidedActive && <GuidedDemoStep instruction={{
+      step: 2,
+      title: "Connect Vonage WhatsApp",
+      explanation: "Scan the Sandbox QR first, then scan the unique OBLIQ START QR and wait for WhatsApp Connected.",
+      why: "The first QR joins Vonage; the second securely binds this judge to the isolated GST workflow.",
+    }} />}
     <WhatsAppDemoView created={created} status={sessionStatus} countdown={countdown} busy={busy} onCopy={copy} onRegenerate={regenerate} onCancel={cancel} onReconnect={reconnect}/>
   </>;
 }

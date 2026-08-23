@@ -492,6 +492,7 @@ async def propose_validation_correction(
             application=application,
             user_id=user.user_id,
             record_ids=list(dict.fromkeys(payload.record_ids)),
+            finding_ids=list(dict.fromkeys(payload.finding_ids)),
             mode=payload.mode,
             manual_changes=payload.changes,
             rationale=payload.rationale,

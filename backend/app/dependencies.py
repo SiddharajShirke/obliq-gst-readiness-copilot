@@ -8,16 +8,16 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.repositories import DataStore, get_store
-from app.schemas.auth import UserContext
+from app.schemas.auth import AuthenticatedIdentity, UserContext
 
 bearer_scheme = HTTPBearer(auto_error=False)
 INVALID_AUTH_DETAIL = "Invalid or expired authentication session"
 
 
-async def current_user(
+async def authenticated_identity(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     store: Annotated[DataStore, Depends(get_store)],
-) -> UserContext:
+) -> AuthenticatedIdentity:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required"
@@ -33,16 +33,30 @@ async def current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=INVALID_AUTH_DETAIL,
         )
-    if not user.get("firm_id") or not user.get("role"):
+    return AuthenticatedIdentity(
+        user_id=user["id"],
+        firm_id=user.get("firm_id"),
+        role=user.get("role"),
+        email=user.get("email", ""),
+        full_name=user.get("full_name", ""),
+    )
+
+
+async def current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    store: Annotated[DataStore, Depends(get_store)],
+) -> UserContext:
+    identity = await authenticated_identity(credentials, store)
+    if not identity.firm_id or not identity.role:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User is not assigned to an OBLIQ firm",
         )
     return UserContext(
-        user_id=user["id"],
-        firm_id=user["firm_id"],
-        role=user["role"],
-        email=user.get("email", ""),
+        user_id=identity.user_id,
+        firm_id=identity.firm_id,
+        role=identity.role,
+        email=identity.email,
     )
 
 

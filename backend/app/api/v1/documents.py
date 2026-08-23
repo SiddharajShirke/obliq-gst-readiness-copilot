@@ -37,7 +37,10 @@ from app.services.document_processing.pipeline import (
     process_ingested_document,
     submit_ingested_documents,
 )
-from app.services.document_processing.portfolio import build_portfolio
+from app.services.document_processing.portfolio import (
+    build_portfolio,
+    is_client_extraction_review_eligible,
+)
 from app.services.document_processing.processor import (
     DocumentProcessor,
     persist_uploaded_document,
@@ -370,12 +373,7 @@ async def bulk_review_extractions(
     now = datetime.now(UTC).isoformat()
     review_status = "approved" if payload.action == "approve" else "rejected"
     typed_records = [record for record in records if record is not None]
-    if any(
-        record.get("review_status") != "pending"
-        or record.get("source_type") in {"gstr2b", "developer_ground_truth"}
-        or record.get("document_type") == "developer_ground_truth"
-        for record in typed_records
-    ):
+    if any(not is_client_extraction_review_eligible(record) for record in typed_records):
         raise HTTPException(
             status_code=409,
             detail="Only pending client extraction records are eligible for bulk review",

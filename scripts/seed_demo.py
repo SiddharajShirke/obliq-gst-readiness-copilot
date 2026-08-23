@@ -28,55 +28,7 @@ CLIENTS = [
         "monthly",
         "Raj Malhotra",
         "+919810000001",
-        "purchase register missing",
-    ),
-    (
-        CLIENT_IDS["abc"],
-        "ABC Electronics",
-        "ABC Electronics Private Limited",
-        "29ABCDE1234F1Z3",
-        "Karnataka",
-        "Electronics",
-        "monthly",
-        "Kavya Rao",
-        "+919810000002",
-        "duplicate and wrong-period invoice",
-    ),
-    (
-        CLIENT_IDS["nova"],
-        "Nova Services",
-        "Nova Professional Services LLP",
-        "07NOVAS1234L1Z4",
-        "Delhi",
-        "Professional services",
-        "monthly",
-        "Rohan Mehta",
-        "+919810000003",
-        "ready for CA review",
-    ),
-    (
-        CLIENT_IDS["city"],
-        "City Retail",
-        "City Retail Private Limited",
-        "24CITYR1234P1Z2",
-        "Gujarat",
-        "Retail",
-        "quarterly",
-        "Neha Shah",
-        "+919810000004",
-        "GSTR-2B mismatch",
-    ),
-    (
-        CLIENT_IDS["mehta"],
-        "Mehta Consulting",
-        "Mehta Consulting",
-        "27MEHTA1234C1Z6",
-        "Maharashtra",
-        "Consulting",
-        "monthly",
-        "Arjun Mehta",
-        "+919810000005",
-        "low-confidence scan",
+        "guided_demo_template",
     ),
 ]
 
@@ -85,31 +37,7 @@ APPS = [
         "30000000-0000-0000-0000-000000000001",
         CLIENT_IDS["raj"],
         "April 2026",
-        "partially_received",
-    ),
-    (
-        "30000000-0000-0000-0000-000000000002",
-        CLIENT_IDS["abc"],
-        "April 2026",
-        "validation_review",
-    ),
-    (
-        "30000000-0000-0000-0000-000000000003",
-        CLIENT_IDS["nova"],
-        "April 2026",
-        "ready_for_ca_review",
-    ),
-    (
-        "30000000-0000-0000-0000-000000000004",
-        CLIENT_IDS["city"],
-        "Q1 2026-27",
-        "reconciliation_review",
-    ),
-    (
-        "30000000-0000-0000-0000-000000000005",
-        CLIENT_IDS["mehta"],
-        "April 2026",
-        "extraction_review",
+        "not_started",
     ),
 ]
 
@@ -283,7 +211,7 @@ async def seed() -> None:
             firm_id=None if official else DEMO_FIRM_ID,
         )
     print(
-        "Seeded Sharma & Associates, three users, five clients, five GST applications, and demo knowledge."
+        "Seeded Sharma & Associates, three users, one Raj Traders Guided Demo client, one GST application, and demo knowledge."
     )
     print(f"Demo admin: {settings.demo_admin_email} / {settings.demo_admin_password}")
 

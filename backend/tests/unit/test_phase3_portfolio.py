@@ -59,3 +59,49 @@ def test_portfolio_rejects_non_business_scope() -> None:
         assert "Unsupported portfolio scope" in str(exc)
     else:
         raise AssertionError("developer ground truth must never be a portfolio scope")
+
+
+def test_portfolio_marks_only_pending_client_records_as_bulk_review_eligible() -> None:
+    result = build_portfolio(
+        [
+            _record("pending-client", "sales_register", "1000", "180"),
+            _record(
+                "pending-transaction-type",
+                "Regular",
+                "950",
+                "171",
+                source_type="purchase_register",
+            ),
+            _record(
+                "pending-gstr2b",
+                "gstr2b",
+                "900",
+                "162",
+                source_type="gstr2b",
+            ),
+            _record(
+                "needs-review-client",
+                "purchase_register",
+                "800",
+                "144",
+                review_status="needs_review",
+            ),
+            _record(
+                "approved-client",
+                "purchase_register",
+                "700",
+                "126",
+                review_status="approved",
+            ),
+        ],
+        "combined",
+    )
+
+    eligibility = {row["id"]: row["review_eligible"] for row in result["records"]}
+    assert eligibility == {
+        "pending-client": True,
+        "pending-transaction-type": True,
+        "pending-gstr2b": False,
+        "needs-review-client": False,
+        "approved-client": False,
+    }

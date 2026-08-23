@@ -85,6 +85,22 @@ class NormalizedGSTRecord(BaseModel):
                 continue
         return value
 
+    @field_validator("source_page", "source_row", mode="before")
+    @classmethod
+    def normalize_source_position(cls, value: Any) -> int | None:
+        """Keep usable provenance without letting an AI label invalidate GST data."""
+
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value if value > 0 else None
+        if isinstance(value, float):
+            return int(value) if value.is_integer() and value > 0 else None
+        if isinstance(value, str):
+            text = value.strip()
+            return int(text) if text.isdigit() and int(text) > 0 else None
+        return None
+
 
 class ExtractionUpdate(BaseModel):
     structured_data: dict[str, Any]

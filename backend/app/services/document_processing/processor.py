@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import time
@@ -264,6 +265,7 @@ class DocumentProcessor:
                             "complex_structured_extraction",
                         )
 
+        original_structured_data = copy.deepcopy(structured)
         raw_rows = structured.get("rows", [])
         if not raw_rows and structured.get("invoice_number"):
             application = await self.store.get_row("applications", document["application_id"])
@@ -285,6 +287,7 @@ class DocumentProcessor:
         completed = datetime.now(UTC)
         return {
             "raw_text": raw_text,
+            "original_structured_data": original_structured_data,
             "structured_data": structured,
             "invoice_rows": normalized_rows,
             "provider": provider,
@@ -353,7 +356,7 @@ class DocumentProcessor:
             "document_type": state["document_type"],
             "raw_text": state.get("raw_text", ""),
             "structured_data": structured,
-            "original_structured_data": structured,
+            "original_structured_data": state.get("original_structured_data", structured),
             "field_confidences": structured.get("field_confidences", {}),
             "overall_confidence": structured.get(
                 "overall_confidence", 0.95 if structured.get("rows") else 0.0

@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from supabase_auth.errors import AuthApiError
 
-from app.dependencies import current_user
+from app.dependencies import authenticated_identity, current_user
 from app.repositories.supabase import SupabaseStore
 
 
@@ -108,6 +108,27 @@ async def test_valid_supabase_user_without_firm_membership_is_forbidden() -> Non
     assert caught.value.detail == "User is not assigned to an OBLIQ firm"
 
 
+@pytest.mark.asyncio
+async def test_authenticated_identity_allows_bootstrap_before_firm_membership() -> None:
+    store = _AuthStore(
+        {
+            "id": "user-id",
+            "firm_id": None,
+            "role": None,
+            "email": "ca@example.com",
+            "full_name": "CA User",
+        }
+    )
+
+    identity = await authenticated_identity(
+        _bearer("header.payload.signature"), store  # type: ignore[arg-type]
+    )
+
+    assert identity.user_id == "user-id"
+    assert identity.firm_id is None
+    assert identity.full_name == "CA User"
+
+
 class _AuthApiFailure:
     def get_user(self, token: str) -> None:
         del token
@@ -166,6 +187,7 @@ async def test_supabase_store_preserves_valid_user_when_membership_is_missing() 
         "firm_id": None,
         "role": None,
         "email": "ca@example.com",
+        "full_name": "",
     }
 
 

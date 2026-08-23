@@ -30,6 +30,7 @@ async def test_validation_portfolio_groups_live_findings_and_alerts_by_six_categ
             "requirement_id": requirement["id"],
             "document_type": "purchase_register",
             "processing_status": "approved",
+            "original_name": "04_Purchase_and_Expense_Invoices.pdf",
         },
     )
     record = await store.insert_row(
@@ -42,6 +43,15 @@ async def test_validation_portfolio_groups_live_findings_and_alerts_by_six_categ
             "document_id": document["id"],
             "document_type": "purchase_register",
             "review_status": "approved",
+            "invoice_number": "EFI/0826/889",
+            "supplier_name": "Evergreen Fixtures India",
+            "supplier_gstin": "27ABCDE1234F1Z5",
+            "invoice_date": "2026-08-02",
+            "taxable_value": "90000.00",
+            "cgst": "8100.00",
+            "sgst": "8100.00",
+            "invoice_total": "106200.00",
+            "source_page": 2,
         },
     )
     finding = await store.insert_row(
@@ -56,6 +66,7 @@ async def test_validation_portfolio_groups_live_findings_and_alerts_by_six_categ
             "severity": "high",
             "message": "Tax arithmetic differs",
             "status": "open",
+            "details": {"expected_total_tax": "16200.00", "recorded_total_tax": "16000.00"},
         },
     )
     await store.insert_row(
@@ -91,6 +102,15 @@ async def test_validation_portfolio_groups_live_findings_and_alerts_by_six_categ
             "open_count": 1,
         }
     ]
+    evidence = purchase["findings"][0]["evidence_context"]
+    assert evidence["document_name"] == "04_Purchase_and_Expense_Invoices.pdf"
+    assert evidence["document_number"] == "EFI/0826/889"
+    assert evidence["party_name"] == "Evergreen Fixtures India"
+    assert evidence["party_gstin"] == "27ABCDE1234F1Z5"
+    assert evidence["transaction_date"] == "2026-08-02"
+    assert evidence["taxable_value"] == "90000.00"
+    assert evidence["source_page"] == 2
+    assert evidence["period_label"] == "April 2026"
     assert portfolio["summary"]["finding_count"] == 1
     assert all(
         item["type"] not in {"gstr2b", "developer_ground_truth"} for item in portfolio["categories"]

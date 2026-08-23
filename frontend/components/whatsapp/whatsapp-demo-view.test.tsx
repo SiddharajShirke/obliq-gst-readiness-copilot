@@ -50,6 +50,12 @@ describe("live WhatsApp demo view", () => {
 
     expect(html).toContain("Step 1: Join the Sandbox");
     expect(html).toContain("Step 2: Start the OBLIQ session");
+    expect(html).toContain("Vonage Sandbox Connection");
+    expect(html).toContain("Start OBLIQ Session");
+    expect(html).toContain("Scan the Vonage Sandbox QR");
+    expect(html).toContain("Wait until the Sandbox connection is ready");
+    expect(html).toContain("Scan the OBLIQ START QR");
+    expect(html).toContain("WhatsApp Connected");
     expect(html).toContain("Vonage WhatsApp Sandbox");
     expect(html).toContain("one judge");
     expect(html).toContain("+91 ******3210");

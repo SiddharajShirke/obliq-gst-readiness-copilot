@@ -11,7 +11,7 @@ import {formatDate, formatStatus} from "../../lib/format";
 import {Badge} from "../ui/badge";
 import {Button} from "../ui/button";
 import {Card} from "../ui/card";
-import {selectionState} from "../../lib/review-selection";
+import {extractionReviewEligibleIds, selectionState} from "../../lib/review-selection";
 
 const SCOPES: {value: ExtractionPortfolioScope; label: string}[] = [
   {value: "sales_register", label: "Sales Register"},
@@ -43,6 +43,7 @@ type PortfolioProps = {
   onSelectVisible: (ids: string[], checked: boolean) => void;
   onInspect: (record: GSTRecord) => void;
   onBulkReview: (action: "approve" | "reject") => void;
+  reviewBusy?: boolean;
 };
 
 export function ExtractionPortfolio(props: PortfolioProps) {
@@ -51,9 +52,7 @@ export function ExtractionPortfolio(props: PortfolioProps) {
     `${row.invoice_number ?? ""} ${party(row)} ${row.supplier_gstin ?? row.customer_gstin ?? ""}`
       .toLowerCase().includes(search.toLowerCase()),
   );
-  const eligibleIds = records
-    .filter(row => !["approved", "edited_and_approved", "rejected"].includes(row.review_status))
-    .map(row => row.id);
+  const eligibleIds = extractionReviewEligibleIds(records);
   const selectAll = selectionState(selectedIds, eligibleIds);
   const selectAllRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -94,7 +93,7 @@ export function ExtractionPortfolio(props: PortfolioProps) {
               aria-label="Select all visible extraction records"
               type="checkbox"
               checked={selectAll.checked}
-              disabled={!eligibleIds.length}
+              disabled={props.reviewBusy || !eligibleIds.length}
               onChange={event => props.onSelectVisible(eligibleIds, event.target.checked)}
             />
             Select All
@@ -110,18 +109,18 @@ export function ExtractionPortfolio(props: PortfolioProps) {
       </div>
       {selectedIds.size > 0 && <div className="flex flex-col justify-between gap-3 border-b border-[#c8dff2] bg-[#edf6ff] px-4 py-3 sm:flex-row sm:items-center">
         <div><p className="text-sm font-bold text-[#153a59]">{selectedIds.size} selected for review</p><p className="mt-1 text-xs text-[#47708f]">A confirmation preview appears before changes are saved.</p></div>
-        <div className="flex flex-wrap gap-2"><Button onClick={() => props.onBulkReview("approve")}><CheckCircle2 size={15}/>Approve selected</Button><Button variant="secondary" onClick={() => props.onBulkReview("reject")}><XCircle size={15}/>Reject selected</Button></div>
+        <div className="flex flex-wrap gap-2"><Button disabled={props.reviewBusy} onClick={() => props.onBulkReview("approve")}><CheckCircle2 size={15}/>Approve selected</Button><Button variant="secondary" disabled={props.reviewBusy} onClick={() => props.onBulkReview("reject")}><XCircle size={15}/>Reject selected</Button></div>
       </div>}
       {mode === "portfolio" ? <div className="grid gap-4 p-4 md:grid-cols-2 xl:grid-cols-3">
         {records.map(row => <article key={row.id} className="rounded-2xl border border-[var(--obliq-border)] bg-[var(--obliq-surface)] p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:hover:bg-[var(--obliq-interactive-hover)]">
-          <div className="flex items-start justify-between gap-3"><label className="flex items-center gap-2"><input type="checkbox" disabled={!eligibleIds.includes(row.id)} checked={selectedIds.has(row.id)} onChange={() => props.onToggleSelection(row.id)}/><Badge value={row.document_type ?? row.invoice_category}/></label><Badge value={row.review_status}/></div>
+          <div className="flex items-start justify-between gap-3"><label className="flex items-center gap-2"><input type="checkbox" disabled={props.reviewBusy || !eligibleIds.includes(row.id)} checked={selectedIds.has(row.id)} onChange={() => props.onToggleSelection(row.id)}/><Badge value={row.document_type ?? row.invoice_category}/></label><Badge value={row.review_status}/></div>
           <button type="button" onClick={() => props.onInspect(row)} className="mt-4 w-full text-left">
             <h4 className="text-lg font-bold">{row.invoice_number ?? "Unnumbered record"}</h4>
             <p className="mt-1 text-sm text-[#625d5a]">{party(row)}</p>
             <dl className="mt-4 grid grid-cols-2 gap-3 text-xs"><div><dt className="text-[#8a837e]">Taxable</dt><dd className="mt-1 font-semibold">{money(row.taxable_value)}</dd></div><div><dt className="text-[#8a837e]">Total GST</dt><dd className="mt-1 font-semibold">{money(row.total_tax)}</dd></div><div><dt className="text-[#8a837e]">Date</dt><dd className="mt-1">{formatDate(row.invoice_date)}</dd></div><div><dt className="text-[#8a837e]">Source row</dt><dd className="mt-1">{row.source_row ?? "—"}</dd></div></dl>
           </button>
         </article>)}
-      </div> : <div className="overflow-x-auto"><table className="w-full min-w-[960px] text-left text-sm"><thead className="bg-[#f8f7f5] text-xs text-[#77716e]"><tr>{["Select", "Type", "Invoice", "Party", "GSTIN", "Date", "Taxable", "GST", "Total", "Review"].map(label => <th key={label} className="px-4 py-3">{label}</th>)}</tr></thead><tbody className="divide-y divide-[#eeeae6]">{records.map(row => <tr key={row.id} className="cursor-pointer hover:bg-[#faf9f7]" onClick={() => props.onInspect(row)}><td className="px-4 py-3" onClick={event => event.stopPropagation()}><input aria-label={`Select ${row.invoice_number ?? row.id}`} type="checkbox" disabled={!eligibleIds.includes(row.id)} checked={selectedIds.has(row.id)} onChange={() => props.onToggleSelection(row.id)}/></td><td className="px-4 py-3"><Badge value={row.document_type ?? row.invoice_category}/></td><td className="px-4 py-3 font-semibold">{row.invoice_number ?? "—"}</td><td className="px-4 py-3">{party(row)}</td><td className="px-4 py-3 font-mono text-xs">{row.supplier_gstin ?? row.customer_gstin ?? "—"}</td><td className="px-4 py-3">{formatDate(row.invoice_date)}</td><td className="px-4 py-3">{money(row.taxable_value)}</td><td className="px-4 py-3">{money(row.total_tax)}</td><td className="px-4 py-3">{money(row.invoice_total)}</td><td className="px-4 py-3"><Badge value={row.review_status}/></td></tr>)}</tbody></table></div>}
+      </div> : <div className="overflow-x-auto"><table className="w-full min-w-[960px] text-left text-sm"><thead className="bg-[#f8f7f5] text-xs text-[#77716e]"><tr>{["Select", "Type", "Invoice", "Party", "GSTIN", "Date", "Taxable", "GST", "Total", "Review"].map(label => <th key={label} className="px-4 py-3">{label}</th>)}</tr></thead><tbody className="divide-y divide-[#eeeae6]">{records.map(row => <tr key={row.id} className="cursor-pointer hover:bg-[#faf9f7]" onClick={() => props.onInspect(row)}><td className="px-4 py-3" onClick={event => event.stopPropagation()}><input aria-label={`Select ${row.invoice_number ?? row.id}`} type="checkbox" disabled={props.reviewBusy || !eligibleIds.includes(row.id)} checked={selectedIds.has(row.id)} onChange={() => props.onToggleSelection(row.id)}/></td><td className="px-4 py-3"><Badge value={row.document_type ?? row.invoice_category}/></td><td className="px-4 py-3 font-semibold">{row.invoice_number ?? "—"}</td><td className="px-4 py-3">{party(row)}</td><td className="px-4 py-3 font-mono text-xs">{row.supplier_gstin ?? row.customer_gstin ?? "—"}</td><td className="px-4 py-3">{formatDate(row.invoice_date)}</td><td className="px-4 py-3">{money(row.taxable_value)}</td><td className="px-4 py-3">{money(row.total_tax)}</td><td className="px-4 py-3">{money(row.invoice_total)}</td><td className="px-4 py-3"><Badge value={row.review_status}/></td></tr>)}</tbody></table></div>}
       {!records.length && <div className="p-10 text-center text-sm text-[#77716e]">No normalized records match this portfolio.</div>}
     </Card>
   </div>;

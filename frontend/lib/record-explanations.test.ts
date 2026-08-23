@@ -5,6 +5,7 @@ import {
   explainFinding,
   explainGSTRecord,
   explainReconciliationItem,
+  findingEvidenceEntries,
 } from "./record-explanations";
 
 describe("dynamic row explanations", () => {
@@ -44,5 +45,35 @@ describe("dynamic row explanations", () => {
     expect(explainFinding(finding).summary).toContain("Tax components");
     expect(explainReconciliationItem(reconciliation).summary.toLowerCase()).toContain("taxable value");
     expect(explainAuditEvent(audit).summary).toContain("doc-7");
+  });
+
+  it("presents meaningful validation evidence before technical identifiers", () => {
+    const finding = {
+      id: "finding-1",
+      finding_type: "wrong_period",
+      severity: "medium",
+      message: "Invoice does not belong to the selected GST period.",
+      status: "open",
+      document_id: "opaque-document-id",
+      invoice_record_id: "opaque-record-id",
+      evidence_context: {
+        issue_summary: "Invoice dated 02-08-2026 is outside May 2026.",
+        document_name: "01_Purchase_Register.pdf",
+        document_number: "INV-44",
+        party_name: "Dynamic Supplier",
+        party_gstin: "27ABCDE1234F1Z5",
+        document_date: "2026-08-02",
+        period_label: "May 2026",
+        taxable_value: "90000.00",
+      },
+    } satisfies Finding;
+
+    expect(findingEvidenceEntries(finding)).toEqual(expect.arrayContaining([
+      ["Source document", "01_Purchase_Register.pdf"],
+      ["Invoice / document number", "INV-44"],
+      ["Party", "Dynamic Supplier"],
+      ["Selected GST period", "May 2026"],
+    ]));
+    expect(findingEvidenceEntries(finding).flat()).not.toContain("opaque-document-id");
   });
 });

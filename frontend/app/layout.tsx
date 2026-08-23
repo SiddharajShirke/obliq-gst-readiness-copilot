@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning data-scroll-behavior="smooth">
       <head><script dangerouslySetInnerHTML={{__html: THEME_INIT_SCRIPT}}/></head>
       <body>
         <ThemeProvider><AuthProvider>{children}</AuthProvider></ThemeProvider>

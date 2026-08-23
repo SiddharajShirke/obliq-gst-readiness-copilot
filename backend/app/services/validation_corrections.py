@@ -88,6 +88,35 @@ def _materialize_changes(
     return changes
 
 
+def _review_guidance(findings: list[dict[str, Any]]) -> str:
+    guidance: list[str] = []
+    for finding in findings:
+        details = finding.get("details") or {}
+        if finding.get("finding_type") == "wrong_period":
+            guidance.append(
+                f"Invoice date {details.get('invoice_date') or 'unknown'} is outside the selected "
+                f"GST period {details.get('period_start') or 'unknown'} to "
+                f"{details.get('period_end') or 'unknown'}. Verify the original document: if the "
+                "date is accurate, keep the value and assign the transaction to the correct "
+                "period; "
+                "if extraction is wrong, correct invoice_date using the source document."
+            )
+        elif finding.get("finding_type") == "tax_arithmetic_mismatch":
+            guidance.append(
+                "Verify the component taxes and taxable value against the source invoice before "
+                "changing the recorded total tax."
+            )
+        else:
+            guidance.append(
+                f"Review {finding.get('message') or finding.get('finding_type') or 'the finding'} "
+                "against the original source before changing any extracted field."
+            )
+    return " ".join(guidance)[:2000] or (
+        "No selected finding contains enough source evidence for a safe correction. "
+        "Verify the original document before changing the extracted value."
+    )
+
+
 async def create_correction_proposal(
     store: DataStore,
     settings: Settings,
@@ -95,12 +124,29 @@ async def create_correction_proposal(
     application: dict[str, Any],
     user_id: str,
     record_ids: list[str],
+    finding_ids: list[str],
     mode: str,
     manual_changes: dict[str, Any],
     rationale: str | None,
 ) -> dict[str, Any]:
     raw_records = [await store.get_row("invoice_records", record_id) for record_id in record_ids]
     records = _validate_records(raw_records, application["id"], application["firm_id"])
+    raw_findings = [
+        await store.get_row("validation_findings", finding_id)
+        for finding_id in finding_ids
+    ]
+    if any(
+        finding is None
+        or str(finding.get("application_id")) != str(application["id"])
+        or str(finding.get("firm_id")) != str(application["firm_id"])
+        or (
+            finding.get("invoice_record_id")
+            and str(finding.get("invoice_record_id")) not in {str(row["id"]) for row in records}
+        )
+        for finding in raw_findings
+    ):
+        raise LookupError("One or more validation findings were not found")
+    findings = [finding for finding in raw_findings if finding is not None]
     provider = None
     model = None
     if mode == "manual":
@@ -116,14 +162,31 @@ async def create_correction_proposal(
         ]
         proposal_rationale = rationale or "Manual correction requires explicit confirmation"
     else:
-        evidence = [
-            {key: row.get(key) for key in ("id", *sorted(ALLOWED_CORRECTION_FIELDS))}
-            for row in records
-        ]
+        evidence = {
+            "application": {
+                "period_label": application.get("period_label"),
+                "period_start": application.get("period_start"),
+                "period_end": application.get("period_end"),
+            },
+            "records": [
+                {key: row.get(key) for key in ("id", *sorted(ALLOWED_CORRECTION_FIELDS))}
+                for row in records
+            ],
+            "deterministic_findings": [
+                {
+                    "id": finding.get("id"),
+                    "finding_type": finding.get("finding_type"),
+                    "message": finding.get("message"),
+                    "details": finding.get("details") or {},
+                }
+                for finding in findings
+            ],
+        }
+        deterministic_guidance = _review_guidance(findings)
         if settings.ai_mode == "mock":
             generated = {
                 "changes": [],
-                "rationale": "Mock AI review found no safe automatic suggestion",
+                "rationale": deterministic_guidance,
             }
             provider, model = "nvidia", settings.nvidia_small_model or "mock-nvidia-small"
         else:
@@ -148,6 +211,8 @@ async def create_correction_proposal(
         validated = SuggestedChanges.model_validate(generated)
         suggestions = validated.changes
         proposal_rationale = validated.rationale
+        if not suggestions and deterministic_guidance not in proposal_rationale:
+            proposal_rationale = f"{proposal_rationale} {deterministic_guidance}"[:2000]
     changes = _materialize_changes(records, suggestions)
     now = datetime.now(UTC).isoformat()
     return await store.insert_row(

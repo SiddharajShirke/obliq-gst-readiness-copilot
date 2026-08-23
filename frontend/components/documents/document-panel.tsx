@@ -5,7 +5,11 @@ import {useCallback, useEffect, useState} from "react";
 import {toast} from "sonner";
 import {apiFetch, resolveAssetUrl} from "../../lib/api";
 import {formatDate, formatStatus} from "../../lib/format";
-import {selectAllVisible} from "../../lib/review-selection";
+import {
+  extractionReviewEligibleIds,
+  selectAllVisible,
+  trimSelectionToVisible,
+} from "../../lib/review-selection";
 import type {
   DocumentRecord,
   Extraction,
@@ -66,6 +70,8 @@ export function DocumentPanel({applicationId, checklist, onChanged}: Props) {
     ]);
     setSummary(nextSummary);
     setPortfolio(nextPortfolio);
+    const eligibleIds = extractionReviewEligibleIds(nextPortfolio.records);
+    setSelectedRecordIds(current => trimSelectionToVisible(current, eligibleIds));
   }, [applicationId, portfolioScope]);
 
   useEffect(() => {
@@ -152,8 +158,16 @@ export function DocumentPanel({applicationId, checklist, onChanged}: Props) {
   }
 
   async function bulkReview(actionName: "approve" | "reject") {
-    const recordIds = [...selectedRecordIds];
-    if (!recordIds.length) return;
+    const eligible = new Set(extractionReviewEligibleIds(portfolio.records));
+    const recordIds = [...selectedRecordIds].filter(id => eligible.has(id));
+    if (!recordIds.length) {
+      setSelectedRecordIds(new Set());
+      toast.info("No pending client extraction records remain selected.");
+      return;
+    }
+    if (recordIds.length !== selectedRecordIds.size) {
+      setSelectedRecordIds(new Set(recordIds));
+    }
     const verb = actionName === "approve" ? "approve" : "reject";
     if (!window.confirm(`${verb === "approve" ? "Approve" : "Reject"} ${recordIds.length} selected extraction records? This action will be audited.`)) return;
     setBusy(true);
@@ -219,6 +233,7 @@ export function DocumentPanel({applicationId, checklist, onChanged}: Props) {
         selectAllVisible(current, ids, checked))}
       onInspect={setSelectedRecord}
       onBulkReview={actionName => void bulkReview(actionName)}
+      reviewBusy={busy}
     />
     {selectedRecord && <ExtractionReviewWorkspace
       record={selectedRecord}

@@ -1,3 +1,4 @@
+import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -54,12 +55,35 @@ async def list_applications(
     user: Annotated[UserContext, Depends(current_user)],
     store: Annotated[DataStore, Depends(get_store)],
 ) -> list[dict]:
-    return await store.list_rows(
+    applications = await store.list_rows(
         "applications",
         {"firm_id": user.firm_id, "demo_session_id": None},
         order="created_at",
         desc=True,
     )
+
+    async def with_live_status(application: dict) -> dict:
+        effective_id = str(application["id"])
+        sessions = await store.list_rows(
+            "whatsapp_demo_sessions",
+            {"firm_id": user.firm_id, "base_application_id": application["id"]},
+            order="created_at",
+            desc=True,
+        )
+        if sessions:
+            candidate_id = str(sessions[0].get("session_application_id") or "")
+            if candidate_id and await store.get_row("applications", candidate_id):
+                effective_id = candidate_id
+        workflow = await get_workflow_progress(store, effective_id)
+        return {
+            **application,
+            "effective_application_id": effective_id,
+            "display_status": workflow["current_stage"],
+            "workflow_percent": workflow["progress_percent"],
+            "ready_for_filing": workflow["readiness"]["ready_for_filing"],
+        }
+
+    return list(await asyncio.gather(*(with_live_status(row) for row in applications)))
 
 
 @router.post("/clients/{client_id}/applications", status_code=status.HTTP_201_CREATED)

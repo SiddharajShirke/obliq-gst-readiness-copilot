@@ -2,7 +2,9 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-SPEC = spec_from_file_location("generate_demo_documents", ROOT / "scripts" / "generate_demo_documents.py")
+SPEC = spec_from_file_location(
+    "generate_demo_documents", ROOT / "scripts" / "generate_demo_documents.py"
+)
 assert SPEC and SPEC.loader
 MODULE = module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)

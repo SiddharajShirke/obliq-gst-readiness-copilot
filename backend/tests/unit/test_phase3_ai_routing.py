@@ -216,3 +216,60 @@ async def test_successful_retry_clears_previous_processing_error() -> None:
     assert store.updates == [
         ("documents", "document-id", {"processing_error": None})
     ]
+
+
+@pytest.mark.asyncio
+async def test_ai_provenance_is_preserved_before_safe_normalization(monkeypatch) -> None:
+    class ApplicationStore:
+        async def get_row(self, table: str, row_id: str):
+            assert table == "applications"
+            return {"id": row_id, "period_label": "August 2026"}
+
+    async def groq_result(*args, **kwargs):
+        return {
+            "rows": [
+                {
+                    "document_type": "gst_special_transactions",
+                    "document_number": "RCM/0826/001",
+                    "taxable_value": "12500.00",
+                    "source_row": "A",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        "app.services.document_processing.processor.read_pdf_text",
+        lambda content: "Reverse charge transaction RCM/0826/001",
+    )
+    monkeypatch.setattr(
+        "app.services.document_processing.processor.complete_groq_json", groq_result
+    )
+    settings = Settings(
+        app_env="test",
+        whatsapp_provider="mock",
+        ai_mode="live",
+        groq_api_key="groq-key",
+        groq_heavy_model="groq-heavy",
+        nvidia_api_key="nvidia-key",
+        nvidia_base_url="https://integrate.api.nvidia.com/v1",
+        nvidia_small_model="nvidia-small",
+        _env_file=None,
+    )
+    processor = DocumentProcessor(ApplicationStore(), settings)
+
+    result = await processor.parse_and_extract(
+        {
+            "document": {
+                "id": "document-id",
+                "application_id": "application-id",
+                "original_name": "06_GST_Special_Transactions.pdf",
+                "mime_type": "application/pdf",
+            },
+            "document_type": "gst_special_transactions",
+            "content": b"synthetic-pdf",
+        }
+    )
+
+    assert result["original_structured_data"]["rows"][0]["source_row"] == "A"
+    assert result["structured_data"]["rows"][0]["source_row"] is None
+    assert result["invoice_rows"][0]["document_number"] == "RCM/0826/001"

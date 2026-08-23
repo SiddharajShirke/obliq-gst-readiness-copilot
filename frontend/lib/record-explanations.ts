@@ -44,6 +44,46 @@ export function explainFinding(finding: Finding): RowExplanation {
   };
 }
 
+const moneyEvidence = new Set(["Taxable value", "IGST", "CGST", "SGST / UTGST", "Cess", "Total tax", "Document total"]);
+
+function evidenceValue(label: string, value: unknown): string {
+  if (moneyEvidence.has(label) && value != null && value !== "") {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return new Intl.NumberFormat("en-IN", {style: "currency", currency: "INR", maximumFractionDigits: 2}).format(numeric);
+    }
+  }
+  return displayDetailValue(value);
+}
+
+export function findingEvidenceEntries(finding: Finding): Array<[string, string]> {
+  const evidence = finding.evidence_context;
+  if (!evidence) return Object.entries(finding.details || {}).map(([key, value]) => [formatStatus(key), displayDetailValue(value)]);
+  const candidates: Array<[string, unknown]> = [
+    ["Source document", evidence.document_name],
+    ["Document category", evidence.document_category ? formatStatus(evidence.document_category) : null],
+    ["Invoice / document number", evidence.document_number],
+    ["Party", evidence.party_name],
+    ["Party GSTIN", evidence.party_gstin],
+    ["Invoice / document date", evidence.document_date],
+    ["Selected GST period", evidence.period_label],
+    ["Period start", evidence.period_start],
+    ["Period end", evidence.period_end],
+    ["Taxable value", evidence.taxable_value],
+    ["IGST", evidence.igst],
+    ["CGST", evidence.cgst],
+    ["SGST / UTGST", evidence.sgst],
+    ["Cess", evidence.cess],
+    ["Total tax", evidence.total_tax],
+    ["Document total", evidence.total_document_value],
+    ["Source page", evidence.source_page],
+    ["Source row", evidence.source_row],
+  ];
+  return candidates
+    .filter(([, value]) => value != null && value !== "")
+    .map(([label, value]) => [label, evidenceValue(label, value)]);
+}
+
 const reconciliationMeaning: Record<string, string> = {
   exact_match: "Books and GSTR-2B match on every available normalized comparison field.",
   value_mismatch: "The identity matched, but one or more exact field values differ.",

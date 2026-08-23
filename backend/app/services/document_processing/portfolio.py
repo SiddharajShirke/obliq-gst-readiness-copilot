@@ -19,6 +19,22 @@ def _money(value: Any) -> Decimal:
         return Decimal("0")
 
 
+def is_client_extraction_review_eligible(record: dict[str, Any]) -> bool:
+    """Return whether a normalized record may enter the atomic CA bulk-review flow."""
+
+    source_type = record.get("source_type")
+    category = (
+        source_type
+        if source_type in CLIENT_REQUIREMENTS
+        else record.get("document_type") or record.get("invoice_category")
+    )
+    return (
+        record.get("review_status") == "pending"
+        and category in CLIENT_REQUIREMENTS
+        and source_type not in {"gstr2b", "developer_ground_truth"}
+    )
+
+
 def build_portfolio(records: list[dict[str, Any]], scope: str) -> dict[str, Any]:
     if scope not in PORTFOLIO_SCOPES:
         raise ValueError(f"Unsupported portfolio scope: {scope}")
@@ -49,5 +65,8 @@ def build_portfolio(records: list[dict[str, Any]], scope: str) -> dict[str, Any]
             ),
             "rcm_count": sum(row.get("rcm_flag") is True for row in selected),
         },
-        "records": selected,
+        "records": [
+            {**row, "review_eligible": is_client_extraction_review_eligible(row)}
+            for row in selected
+        ],
     }

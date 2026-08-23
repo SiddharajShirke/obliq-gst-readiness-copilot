@@ -14,6 +14,7 @@ import {
   getSupabaseBrowserClient,
   isSupabaseAuthConfigured,
 } from "./supabase";
+import {bootstrapAuthenticatedWorkspace} from "./workspace-bootstrap";
 
 export type AuthUser = {email: string; name?: string; role?: string};
 type DemoRole = "admin" | "preparer" | "reviewer";
@@ -64,10 +65,21 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
     if (supabase) {
       clearLegacyAuthState(window.localStorage);
       void supabase.auth.getSession()
-        .then(({data}) => setUser(sessionUser(data.session)))
+        .then(async ({data}) => {
+          if (data.session) {
+            await bootstrapAuthenticatedWorkspace(data.session.access_token);
+          }
+          setUser(sessionUser(data.session));
+        })
+        .catch(() => setUser(null))
         .finally(() => setLoading(false));
       const {data: listener} = supabase.auth.onAuthStateChange((_event, session) => {
-        setUser(sessionUser(session));
+        void (async () => {
+          if (session) {
+            await bootstrapAuthenticatedWorkspace(session.access_token);
+          }
+          setUser(sessionUser(session));
+        })().catch(() => setUser(null));
       });
       return () => {
         listener.subscription.unsubscribe();
@@ -102,6 +114,7 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
     clearLegacyAuthState(window.localStorage);
     const {data, error} = await supabase.auth.signInWithPassword({email, password});
     if (error || !data.session) throw new Error(error?.message || "Login failed");
+    await bootstrapAuthenticatedWorkspace(data.session.access_token);
     setUser(sessionUser(data.session));
   }, []);
 
@@ -128,8 +141,11 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
       options: {data: {full_name: fullName}},
     });
     if (error) throw new Error(error.message);
+    if (data.session) {
+      await bootstrapAuthenticatedWorkspace(data.session.access_token);
+    }
     return data.session
-      ? "Account created. Ask the firm admin to add this user to a firm."
+      ? "Account created. Your OBLIQ workspace is ready."
       : "Account created. Check your email to confirm the address.";
   }, []);
 

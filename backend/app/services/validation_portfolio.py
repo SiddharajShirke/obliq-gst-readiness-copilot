@@ -22,6 +22,22 @@ def _label(value: str) -> str:
     return value.replace("_", " ").title()
 
 
+def _issue_summary(finding: dict[str, Any]) -> str:
+    details = finding.get("details") or {}
+    if finding.get("finding_type") == "wrong_period":
+        return (
+            f"Invoice date {details.get('invoice_date') or 'unknown'} is outside the selected "
+            f"GST period {details.get('period_start') or 'unknown'} to "
+            f"{details.get('period_end') or 'unknown'}."
+        )
+    if finding.get("finding_type") == "tax_arithmetic_mismatch":
+        return (
+            f"Recorded total tax {details.get('recorded_total_tax') or 'unknown'} differs from "
+            f"the deterministic expected value {details.get('expected_total_tax') or 'unknown'}."
+        )
+    return str(finding.get("message") or "This extracted record requires CA review.")
+
+
 async def get_validation_portfolio(store: DataStore, application_id: str) -> dict[str, Any]:
     application = await store.get_row("applications", application_id)
     if not application:
@@ -40,6 +56,39 @@ async def get_validation_portfolio(store: DataStore, application_id: str) -> dic
     requirement_by_type = {row.get("requirement_type"): row for row in requirements}
     document_by_id = {str(row["id"]): row for row in documents}
     record_by_id = {str(row["id"]): row for row in records}
+    enriched_findings: list[dict[str, Any]] = []
+    for finding in findings:
+        record = record_by_id.get(str(finding.get("invoice_record_id"))) or {}
+        document = document_by_id.get(
+            str(finding.get("document_id") or record.get("document_id"))
+        ) or {}
+        enriched_findings.append(
+            {
+                **finding,
+                "evidence_context": {
+                    "issue_summary": _issue_summary(finding),
+                    "document_name": document.get("original_name"),
+                    "document_category": document.get("document_type"),
+                    "document_number": record.get("invoice_number"),
+                    "party_name": record.get("supplier_name") or record.get("customer_name"),
+                    "party_gstin": record.get("supplier_gstin") or record.get("customer_gstin"),
+                    "transaction_date": record.get("invoice_date"),
+                    "taxable_value": record.get("taxable_value"),
+                    "igst": record.get("igst"),
+                    "cgst": record.get("cgst"),
+                    "sgst": record.get("sgst"),
+                    "cess": record.get("cess"),
+                    "total_tax": record.get("total_tax"),
+                    "document_total": record.get("invoice_total"),
+                    "source_page": record.get("source_page"),
+                    "source_row": record.get("source_row"),
+                    "period_label": application.get("period_label"),
+                    "period_start": application.get("period_start"),
+                    "period_end": application.get("period_end"),
+                },
+            }
+        )
+    findings = enriched_findings
     finding_by_id = {str(row["id"]): row for row in findings}
 
     def record_category(row: dict[str, Any]) -> str | None:

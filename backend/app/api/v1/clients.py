@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Response, status
 
 from app.dependencies import current_user, require_firm_row, require_roles
 from app.repositories import DataStore, get_store

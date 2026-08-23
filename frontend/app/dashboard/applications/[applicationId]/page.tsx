@@ -3,7 +3,6 @@
 import {
   ArrowLeft,
   Check,
-  Circle,
   ClipboardCheck,
   Download,
   FileText,
@@ -20,13 +19,15 @@ import {RagAssistantDrawer} from "@/components/assistant/assistant-panel";
 import {PageHeader} from "@/components/dashboard/page-header";
 import {DocumentPanel} from "@/components/documents/document-panel";
 import {FindingsPanel} from "@/components/documents/findings-panel";
+import {GuidedDemoStep} from "@/components/guided-demo/guided-demo-step";
 import {ReconciliationPanel} from "@/components/reconciliation/reconciliation-panel";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Card} from "@/components/ui/card";
 import {Textarea} from "@/components/ui/field";
 import {Loading} from "@/components/ui/loading";
-import {LiveWhatsAppDemoLink} from "@/components/whatsapp/live-whatsapp-demo-link";
+import {Modal} from "@/components/ui/modal";
+import {WorkflowProgress} from "@/components/workflow/workflow-progress";
 import {apiFetch, preferredExportUrls} from "@/lib/api";
 import {formatDate, formatStatus} from "@/lib/format";
 import type {
@@ -37,9 +38,12 @@ import type {
 } from "@/lib/types";
 import {
   buildDemoContextHeaders,
+  completeGuidedDemo,
+  loadGuidedDemoState,
   loadPendingWhatsAppDraft,
   loadStoredDemoSession,
   removePendingWhatsAppDraft,
+  resolveGuidedDemoStep,
   savePendingWhatsAppDraft,
 } from "@/lib/whatsapp-demo";
 
@@ -68,6 +72,11 @@ export default function ApplicationWorkspace() {
   const [draft, setDraft] = useState<Reminder | null>(null);
   const [message, setMessage] = useState("");
   const [editing, setEditing] = useState(false);
+  const [guidedActive, setGuidedActive] = useState(false);
+  const [guidedRunId, setGuidedRunId] = useState<string | null>(null);
+  const [guidedDismissed, setGuidedDismissed] = useState(false);
+  const [showExportGuide, setShowExportGuide] = useState(false);
+  const [guidedComplete, setGuidedComplete] = useState(false);
 
   const resolveStoredSession = useCallback(() => {
     if (typeof window === "undefined") return null;
@@ -79,11 +88,11 @@ export default function ApplicationWorkspace() {
       ? null
       : loadStoredDemoSession(window.sessionStorage, applicationId);
     const headers = buildDemoContextHeaders(session);
-    const [nextApplication, nextCollection, events] = await Promise.all([
+    const [nextApplication, nextCollection] = await Promise.all([
       apiFetch<GSTApplication>(`/applications/${applicationId}`),
       apiFetch<DocumentCollectionStatus>(`/applications/${applicationId}/document-collection-status`, {headers}),
-      apiFetch<AuditEvent[]>(`/applications/${applicationId}/audit`, {headers}),
     ]);
+    const events = await apiFetch<AuditEvent[]>(`/applications/${nextCollection.effective_application_id}/audit`, {headers});
     setApplication(nextApplication);
     setCollection(nextCollection);
     setAudit(events);
@@ -101,6 +110,16 @@ export default function ApplicationWorkspace() {
       window.clearInterval(timer);
     };
   }, [load]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const timer = window.setTimeout(() => {
+      const guided = loadGuidedDemoState(window.sessionStorage, applicationId);
+      setGuidedActive(guided?.active === true && guided.completed === false);
+      setGuidedRunId(guided?.runId ?? null);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [applicationId]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -222,6 +241,15 @@ export default function ApplicationWorkspace() {
         anchor.remove();
       }
       toast.success("GST preparation export pack generated");
+      if (guidedActive && typeof window !== "undefined") {
+        if (guidedRunId) {
+          await apiFetch(`/guided-demo-runs/${guidedRunId}/complete`, {method: "POST"});
+        }
+        completeGuidedDemo(window.sessionStorage, applicationId);
+        setGuidedActive(false);
+        setGuidedComplete(true);
+      }
+      setShowExportGuide(false);
       await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to export GST preparation pack");
@@ -238,6 +266,16 @@ export default function ApplicationWorkspace() {
   const workflow = collection.workflow;
   const extractionStarted = workflow.extraction.record_count > 0;
   const reconciliationStarted = workflow.reconciliation.run_count > 0;
+  const guidedInstruction = resolveGuidedDemoStep({tab, workflow});
+  const guidedPrimaryAction = (() => {
+    if (guidedInstruction.step === 1) return {label: "Draft Request", onClick: () => void createDraft("request"), disabled: busy || complete};
+    if (guidedInstruction.step === 3) return {label: "View Checklist", onClick: () => setTab("overview")};
+    if (guidedInstruction.step === 4) return {label: "Review Extractions", onClick: () => setTab("documents")};
+    if (guidedInstruction.step === 5) return {label: "Review Findings", onClick: () => setTab("validation")};
+    if (guidedInstruction.step === 6 && workflow.readiness.ready_for_filing) return {label: "Export Pack", onClick: () => setShowExportGuide(true), disabled: busy};
+    if (guidedInstruction.step === 6) return {label: guidedInstruction.actionLabel, onClick: () => setTab("reconciliation")};
+    return undefined;
+  })();
 
   return <>
     <PageHeader
@@ -245,35 +283,21 @@ export default function ApplicationWorkspace() {
       title={`${clientName} · ${application.period_label}`}
       description={`${application.client?.gstin ?? ""} · Due ${formatDate(application.due_date)} · ${formatStatus(application.filing_frequency)} filing`}
       actions={<>
-        <Link href={`/dashboard/clients/${application.client_id}`} className="inline-flex items-center gap-2 rounded-full border border-[#dcd7d2] bg-white px-5 py-3 text-sm font-semibold">
+        <Link href={`/dashboard/clients/${application.client_id}`} className="obliq-focus inline-flex items-center gap-2 rounded-full border border-[var(--obliq-border)] bg-[var(--obliq-surface)] px-5 py-3 text-sm font-semibold">
           <ArrowLeft size={17}/>Client
         </Link>
-        <LiveWhatsAppDemoLink applicationId={applicationId}/>
-        <Button variant="secondary" disabled={busy || !workflow.readiness.main_export_enabled} onClick={() => void exportPack()} title={workflow.readiness.main_export_enabled ? "Download the GST preparation pack" : "Complete Validation Review before exporting the GST preparation pack"}><Download size={16}/>Export Pack</Button>
+        <Button variant="secondary" disabled={busy || !workflow.readiness.main_export_enabled} onClick={() => setShowExportGuide(true)} title={workflow.readiness.main_export_enabled ? "Review and download the GST preparation pack" : "Complete Validation Review before exporting the GST preparation pack"}><Download size={16}/>Export Pack</Button>
       </>}
     />
 
-    <Card className="mb-6 overflow-hidden">
-      <div className="grid gap-5 bg-[var(--obliq-blue)] p-5 text-[#191515] sm:grid-cols-[1fr_auto] sm:items-center">
-        <div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Badge value={workflow.current_stage}/>
-            <span className="text-xs font-semibold">{workflow.extraction.reviewed_count}/{workflow.extraction.record_count} extracted records reviewed · {workflow.validation.open_count} validation findings open</span>
-          </div>
-          <div className="mt-4 h-2 max-w-xl overflow-hidden rounded-full bg-white/60">
-            <div className="h-full rounded-full bg-[#191515] transition-all" style={{width: `${workflow.progress_percent}%`}}/>
-          </div>
-          <p className="mt-2 text-xs font-semibold">Document collection: {collection.received_count}/{collection.required_count} ({collection.progress_percent}%)</p>
-        </div>
-        <div className="text-right"><strong className="text-3xl">{workflow.progress_percent}%</strong><p className="text-xs">overall workflow progress</p></div>
-      </div>
-      <div className="overflow-x-auto border-t border-[var(--obliq-border)] bg-[var(--obliq-surface)] p-4">
-        <div className="flex min-w-[920px] items-center">
-          {workflow.steps.map(step => <Stage key={step.key} label={step.label} state={step.state} progress={step.progress_percent}/>)}
-        </div>
-        <p className="mt-3 text-xs text-[var(--obliq-muted)]">Validation is the readiness gate. GSTR-2B reconciliation is an independent CA review branch and does not block the main export.</p>
-      </div>
-    </Card>
+    {guidedActive && !guidedDismissed && !guidedComplete && <GuidedDemoStep
+      instruction={guidedInstruction}
+      primaryAction={guidedPrimaryAction}
+      secondaryAction={guidedInstruction.step === 6 && workflow.readiness.ready_for_filing ? {label: "Review GSTR-2B", onClick: () => setTab("reconciliation")} : undefined}
+      onDismiss={() => setGuidedDismissed(true)}
+    />}
+
+    <WorkflowProgress workflow={workflow} receivedCount={collection.received_count} requiredCount={collection.required_count}/>
 
     <div className="mb-6 flex gap-1 overflow-x-auto rounded-2xl border border-[var(--obliq-border)] bg-[var(--obliq-surface)] p-1">
       {tabs.map(([value, label]) => <button key={value} onClick={() => value === "assistant" ? setAssistantOpen(true) : setTab(value)} className={`obliq-focus whitespace-nowrap rounded-xl px-4 py-2.5 text-sm font-semibold transition ${value !== "assistant" && tab === value ? "obliq-selected" : "obliq-interactive"}`}>{label}</button>)}
@@ -282,14 +306,14 @@ export default function ApplicationWorkspace() {
     {tab === "overview" && <div className="grid gap-6 xl:grid-cols-[1.2fr_.8fr]">
       <Card className="p-5">
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-          <div><h2 className="font-bold">Document checklist</h2><p className="mt-1 text-xs text-[#77716e]">This live checklist drives requests, reminders, progress, and WhatsApp STATUS.</p></div>
+          <div><h2 className="font-bold">Document checklist</h2><p className="mt-1 text-xs text-[var(--obliq-muted)]">This live checklist drives requests, reminders, progress, and WhatsApp STATUS.</p></div>
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" onClick={() => createDraft("request")} disabled={busy || complete}><MessageCircleMore size={16}/>Draft Request</Button>
             <Button variant="secondary" onClick={() => createDraft("reminder")} disabled={busy}><RefreshCw size={16}/>Draft Reminder</Button>
           </div>
         </div>
         <div className="mt-5 grid gap-3 sm:grid-cols-2">
-          {collection.requirements.map(item => <div key={item.id} className="flex items-center justify-between rounded-2xl border border-[#e5e2de] p-4">
+          {collection.requirements.map(item => <div key={item.id} className="flex items-center justify-between rounded-2xl border border-[var(--obliq-border)] p-4">
             <div className="flex items-center gap-3">
               <span className={`grid h-8 w-8 place-items-center rounded-full ${item.status === "received" ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
                 {item.status === "received" ? <Check size={15}/> : <FileText size={15}/>}
@@ -309,9 +333,9 @@ export default function ApplicationWorkspace() {
               ["Received", collection.received_count],
               ["Pending", collection.missing_count],
               ["Progress", `${collection.progress_percent}%`],
-            ].map(([label, value]) => <div key={label} className="rounded-2xl bg-[#f8f7f5] p-4"><p className="text-2xl font-bold">{value}</p><p className="mt-1 text-xs text-[#77716e]">{label}</p></div>)}
+            ].map(([label, value]) => <div key={label} className="rounded-2xl bg-[var(--obliq-surface-raised)] p-4"><p className="text-2xl font-bold">{value}</p><p className="mt-1 text-xs text-[var(--obliq-muted)]">{label}</p></div>)}
           </div>
-          <div className="mt-4 rounded-2xl border border-[#e5e2de] p-4"><p className="text-xs text-[#77716e]">Current Status</p><p className="mt-2 font-bold">{collectionStatus}</p></div>
+          <div className="mt-4 rounded-2xl border border-[var(--obliq-border)] p-4"><p className="text-xs text-[var(--obliq-muted)]">Current Status</p><p className="mt-2 font-bold">{collectionStatus}</p></div>
         </Card>
         <Card className="p-5">
           <h2 className="font-bold">GST Preparation Readiness</h2>
@@ -323,7 +347,7 @@ export default function ApplicationWorkspace() {
               ["GSTR-2B Review", `${workflow.reconciliation.progress_percent}%`],
             ].map(([label, value]) => <div key={label} className="rounded-2xl bg-[var(--obliq-surface-raised)] p-4"><p className="text-xl font-bold">{value}</p><p className="mt-1 text-xs text-[var(--obliq-muted)]">{label}</p></div>)}
           </div>
-          <ul className="mt-4 grid gap-3 text-sm text-[#625d5a]">
+          <ul className="mt-4 grid gap-3 text-sm text-[var(--obliq-muted)]">
             <li className="flex gap-2"><ClipboardCheck size={17}/> Validation completion deterministically activates Ready for Filing and Export Pack.</li>
             <li className="flex gap-2"><ClipboardCheck size={17}/> Reconciliation remains an independent optional review working.</li>
             <li className="flex gap-2"><ClipboardCheck size={17}/> OBLIQ does not file or submit data to the GST Portal.</li>
@@ -352,10 +376,10 @@ export default function ApplicationWorkspace() {
       <Card className="w-full max-w-2xl p-6 shadow-2xl" onClick={event => event.stopPropagation()}>
         <p className="text-xs font-bold tracking-[.13em] text-[#477ca8]">HUMAN APPROVAL REQUIRED</p>
         <h2 className="mt-3 text-2xl font-bold">{draft.reminder_type === "initial_document_request" ? "Document Request Draft" : "Reminder Draft"}</h2>
-        <p className="mt-2 text-sm text-[#6b6562]">Review the live checklist message and secure upload link before sending through Vonage.</p>
+        <p className="mt-2 text-sm text-[var(--obliq-muted)]">Review the live checklist message and secure upload link before sending through Vonage.</p>
         {editing
           ? <Textarea className="mt-5 h-64 w-full" value={message} onChange={event => setMessage(event.target.value)}/>
-          : <pre className="mt-5 max-h-80 overflow-auto whitespace-pre-wrap rounded-2xl bg-[#f8f7f5] p-4 text-sm leading-6">{message}</pre>}
+          : <pre className="mt-5 max-h-80 overflow-auto whitespace-pre-wrap rounded-2xl bg-[var(--obliq-surface-raised)] p-4 text-sm leading-6">{message}</pre>}
         <div className="mt-5 flex flex-wrap justify-end gap-2">
           <Button variant="ghost" onClick={() => void cancelDraft()}>Cancel</Button>
           <Button variant="secondary" onClick={() => setEditing(value => !value)}>{editing ? "Preview" : "Edit"}</Button>
@@ -363,18 +387,23 @@ export default function ApplicationWorkspace() {
         </div>
       </Card>
     </div>}
-  </>;
-}
 
-function Stage({label, state, progress}: {label: string; state: "completed" | "current" | "pending" | "disabled"; progress: number}) {
-  const completed = state === "completed";
-  const current = state === "current";
-  const disabled = state === "disabled";
-  return <div className="flex flex-1 items-center">
-    <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full border text-xs font-bold ${completed ? "border-[var(--obliq-action)] bg-[var(--obliq-action)] text-[var(--obliq-action-ink)]" : current ? "border-[var(--obliq-focus)] bg-[var(--obliq-blue-soft)] text-[var(--obliq-info-ink)]" : "border-[var(--obliq-border)] bg-[var(--obliq-surface-raised)] text-[var(--obliq-muted)]"}`}>
-      {completed ? <Check size={14}/> : <Circle size={10} fill={current ? "currentColor" : "none"}/>}
-    </span>
-    <span className={`ml-2 text-[11px] font-semibold ${disabled ? "text-[var(--obliq-muted)] opacity-60" : "text-[var(--obliq-ink)]"}`}>{label}{current && progress > 0 && progress < 100 ? ` · ${progress}%` : ""}</span>
-    <span className="mx-3 h-px flex-1 bg-[var(--obliq-border)]"/>
-  </div>;
+    {showExportGuide && <Modal titleId="export-guide-title" onClose={() => setShowExportGuide(false)} className="max-w-xl">
+        <p className="text-xs font-bold tracking-[.13em] text-[var(--obliq-success-ink)]">READY FOR FILING</p>
+        <h2 id="export-guide-title" className="mt-3 text-2xl font-bold">Your GST preparation work is ready.</h2>
+        <p className="mt-3 text-sm leading-6 text-[var(--obliq-muted)]">Generate the Export Pack to download collected-document references, normalized GST data, validation information and available workflow results.</p>
+        <p className="mt-3 rounded-2xl bg-[var(--obliq-warning-soft)] p-3 text-xs text-[var(--obliq-warning-ink)]">This is a preparatory CA working pack, not a filed GST return.</p>
+        <div className="mt-6 flex justify-end gap-2"><Button variant="ghost" onClick={() => setShowExportGuide(false)}>Cancel</Button><Button onClick={() => void exportPack()} disabled={busy}><Download size={16}/>{busy ? "Generating…" : "Export Pack"}</Button></div>
+    </Modal>}
+
+    {guidedComplete && <Modal titleId="guided-complete-title" onClose={() => setGuidedComplete(false)} className="max-w-lg text-center">
+        <span className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[var(--obliq-success-soft)] text-[var(--obliq-success-ink)]"><Check size={24}/></span>
+        <h2 id="guided-complete-title" className="mt-4 text-2xl font-bold">Guided Demo Complete</h2>
+        <p className="mt-2 text-sm text-[var(--obliq-muted)]">You completed the real OBLIQ GST readiness workflow and generated its Export Pack.</p>
+        <div className="mt-6 flex flex-wrap justify-center gap-2">
+          <Button variant="secondary" onClick={() => router.push("/dashboard")}>Return to Overview</Button>
+          <Button onClick={() => router.push(`/dashboard/clients/${application.client_id}`)}>Open Client Profile</Button>
+        </div>
+    </Modal>}
+  </>;
 }

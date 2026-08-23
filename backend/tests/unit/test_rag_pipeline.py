@@ -37,7 +37,10 @@ async def test_ingested_text_is_retrievable_with_citation_metadata() -> None:
     await ingest_text(
         store,
         settings,
-        text="# GSTR-2B Matching\n\nCompare supplier GSTIN and invoice number before reviewing possible ITC differences.",
+        text=(
+            "# GSTR-2B Matching\n\nCompare supplier GSTIN and invoice number before "
+            "reviewing possible ITC differences."
+        ),
         title="Demo GSTR-2B Guidance",
         source_type="official_gst",
         source_url="https://example.test/gstr2b",

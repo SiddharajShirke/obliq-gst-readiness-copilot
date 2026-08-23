@@ -4,20 +4,51 @@ import pandas as pd
 from reportlab.pdfgen import canvas
 
 from app.services.document_processing.classifier import classify_document
-from app.services.document_processing.parsers import extract_invoice_from_text, parse_tabular_document, read_pdf_text
+from app.services.document_processing.parsers import (
+    extract_invoice_from_text,
+    parse_tabular_document,
+    read_pdf_text,
+)
 from app.services.document_processing.processor import resolve_demo_data_root
 
 
 def test_classifier_recognizes_register_and_gstr2b() -> None:
-    assert classify_document("April_Sales_Register.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", b"") == "sales_register"
-    assert classify_document("gstr2b_april.json", "application/json", b'{"records": []}') == "gstr2b"
+    assert (
+        classify_document(
+            "April_Sales_Register.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            b"",
+        )
+        == "sales_register"
+    )
+    assert (
+        classify_document("gstr2b_april.json", "application/json", b'{"records": []}') == "gstr2b"
+    )
 
 
 def test_parse_tabular_document_maps_aliases_and_summarizes() -> None:
-    frame = pd.DataFrame([
-        {"Invoice No": "P-1", "Invoice Date": "2026-04-10", "Supplier GSTIN": "27ABCDE1234F1Z5", "Taxable Amount": 1000, "CGST": 90, "SGST": 90, "Total": 1180},
-        {"Invoice No": "P-2", "Invoice Date": "2026-04-11", "Supplier GSTIN": "27ABCDE1234F1Z5", "Taxable Amount": 2000, "CGST": 180, "SGST": 180, "Total": 2360},
-    ])
+    frame = pd.DataFrame(
+        [
+            {
+                "Invoice No": "P-1",
+                "Invoice Date": "2026-04-10",
+                "Supplier GSTIN": "27ABCDE1234F1Z5",
+                "Taxable Amount": 1000,
+                "CGST": 90,
+                "SGST": 90,
+                "Total": 1180,
+            },
+            {
+                "Invoice No": "P-2",
+                "Invoice Date": "2026-04-11",
+                "Supplier GSTIN": "27ABCDE1234F1Z5",
+                "Taxable Amount": 2000,
+                "CGST": 180,
+                "SGST": 180,
+                "Total": 2360,
+            },
+        ]
+    )
     buffer = BytesIO()
     frame.to_excel(buffer, index=False)
 

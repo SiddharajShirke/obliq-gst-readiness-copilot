@@ -18,14 +18,14 @@ def test_clients_reject_missing_bearer_token() -> None:
     assert response.status_code == 401
 
 
-def test_demo_admin_can_list_seeded_clients() -> None:
+def test_demo_admin_has_exactly_one_guided_demo_template() -> None:
     response = client.get(
         "/api/v1/clients",
         headers={"Authorization": "Bearer demo-admin-token"},
     )
     assert response.status_code == 200
-    names = {item["business_name"] for item in response.json()}
-    assert {"Raj Traders", "ABC Electronics", "Nova Services"}.issubset(names)
+    assert [item["business_name"] for item in response.json()] == ["Raj Traders"]
+    assert response.json()[0]["demo_scenario"] == "guided_demo_template"
 
 
 def test_demo_admin_can_create_application_with_six_requirements() -> None:
@@ -51,18 +51,6 @@ def test_demo_admin_can_create_application_with_six_requirements() -> None:
     assert len(checklist.json()) == 6
 
 
-def test_seeded_quarterly_application_uses_quarter_dates() -> None:
-    response = client.get(
-        "/api/v1/applications/30000000-0000-0000-0000-000000000004",
-        headers={"Authorization": "Bearer demo-admin-token"},
-    )
-    assert response.status_code == 200, response.text
-    application = response.json()
-    assert application["period_start"] == "2026-04-01"
-    assert application["period_end"] == "2026-06-30"
-    assert application["due_date"] == "2026-07-22"
-
-
 def test_seeded_raj_walkthrough_starts_with_empty_checklist() -> None:
     response = client.get(
         "/api/v1/applications/30000000-0000-0000-0000-000000000001/checklist",
@@ -71,3 +59,19 @@ def test_seeded_raj_walkthrough_starts_with_empty_checklist() -> None:
     assert response.status_code == 200, response.text
     assert len(response.json()) == 6
     assert all(row["status"] == "missing" for row in response.json())
+
+
+def test_application_list_uses_live_workflow_status() -> None:
+    applications = client.get(
+        "/api/v1/applications",
+        headers={"Authorization": "Bearer demo-admin-token"},
+    )
+
+    assert applications.status_code == 200, applications.text
+    raj = next(
+        row
+        for row in applications.json()
+        if row["id"] == "30000000-0000-0000-0000-000000000001"
+    )
+    assert raj["display_status"] == "not_started"
+    assert raj["workflow_percent"] == 0

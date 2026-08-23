@@ -20,7 +20,7 @@ type Props = {
 };
 
 function QrAction({value, label}: {value: string; label: string}) {
-  return <div className="rounded-3xl border border-[#e5e2de] bg-white p-5">
+  return <div className="rounded-3xl border border-[var(--obliq-border)] bg-[var(--obliq-surface-raised)] p-5">
     <div className="mx-auto grid w-fit place-items-center rounded-2xl bg-white p-4">
       <QRCode value={value} size={190} aria-label={label}/>
     </div>
@@ -29,7 +29,7 @@ function QrAction({value, label}: {value: string; label: string}) {
 
 function CopyValue({value, onCopy}: {value: string; onCopy: (value: string) => void}) {
   return <div className="mt-4 flex items-center gap-2">
-    <code className="min-w-0 flex-1 overflow-x-auto rounded-xl bg-[#f8f7f5] p-3 text-xs">{value}</code>
+    <code className="min-w-0 flex-1 overflow-x-auto rounded-xl bg-[var(--obliq-surface-raised)] p-3 text-xs">{value}</code>
     <Button variant="secondary" className="px-4" onClick={() => onCopy(value)} aria-label="Copy message">
       <Copy size={16}/>
     </Button>
@@ -38,28 +38,38 @@ function CopyValue({value, onCopy}: {value: string; onCopy: (value: string) => v
 
 export function WhatsAppDemoView({created, status, countdown, busy, onCopy, onRegenerate, onCancel, onReconnect}: Props) {
   const currentStatus = status?.status ?? created.status;
+  const connected = currentStatus === "active";
   return <>
-    <Card className="mb-6 border-amber-200 bg-amber-50 p-5 text-sm leading-6 text-amber-900">
+    <Card className="mb-6 border-[var(--obliq-warning-border)] bg-[var(--obliq-warning-soft)] p-5 text-sm leading-6 text-[var(--obliq-warning-ink)]">
       <strong>This demonstration uses the Vonage WhatsApp Sandbox and your real WhatsApp account.</strong>
       <p className="mt-2">Your number is temporarily encrypted and used only for this session.</p>
       <p>This sandbox demonstration is limited to one judge at a time.</p>
       <p>Do not send confidential or real client information.</p>
     </Card>
 
+    <Card className="mb-6 p-5 sm:p-6">
+      <p className="text-xs font-bold tracking-[.13em] text-[var(--obliq-info-ink)]">CONNECT IN THIS ORDER</p>
+      <ol className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+        {["Scan the Vonage Sandbox QR", "Send the pre-filled Sandbox message", "Wait until the Sandbox connection is ready", "Scan the OBLIQ START QR", "Send the START message", "Wait for OBLIQ to show Connected"].map((instruction, index) => <li key={instruction} className="flex gap-3 rounded-2xl bg-[var(--obliq-surface-raised)] p-3"><span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--obliq-blue-soft)] text-xs font-bold text-[var(--obliq-info-ink)]">{index + 1}</span><span>{instruction}</span></li>)}
+      </ol>
+    </Card>
+
     <div className="grid gap-6 xl:grid-cols-2">
       <Card className="p-6">
-        <p className="text-xs font-bold tracking-[.13em] text-[#477ca8]">STEP 1</p>
+        <p className="text-xs font-bold tracking-[.13em] text-[var(--obliq-info-ink)]">STEP 1</p>
         <h2 className="mt-2 text-xl font-bold">Step 1: Join the Sandbox</h2>
-        <p className="mt-2 text-sm leading-6 text-[#6b6562]">The judge must send Vonage&apos;s allow-list message. OBLIQ cannot automatically confirm this step. Joining is normally required only once while this Sandbox membership remains active.</p>
+        <p className="mt-2 text-sm font-semibold text-[var(--obliq-info-ink)]">Vonage Sandbox Connection</p>
+        <p className="mt-2 text-sm leading-6 text-[var(--obliq-muted)]">The judge must send Vonage&apos;s allow-list message. OBLIQ cannot automatically confirm this step. Joining is normally required only once while this Sandbox membership remains active.</p>
         <div className="mt-5"><QrAction value={created.sandbox_join_whatsapp_url} label="Vonage Sandbox join QR"/></div>
         <CopyValue value={created.sandbox_join_message} onCopy={onCopy}/>
-        <p className="mt-3 text-xs text-[#77716e]">Sandbox sender: {created.sandbox_sender}</p>
+        <p className="mt-3 text-xs text-[var(--obliq-muted)]">Sandbox sender: {created.sandbox_sender}</p>
       </Card>
 
       <Card className="p-6">
-        <p className="text-xs font-bold tracking-[.13em] text-[#477ca8]">STEP 2</p>
+        <p className="text-xs font-bold tracking-[.13em] text-[var(--obliq-info-ink)]">STEP 2</p>
         <h2 className="mt-2 text-xl font-bold">Step 2: Start the OBLIQ session</h2>
-        <p className="mt-2 text-sm leading-6 text-[#6b6562]">This QR is unique to {created.base_client_name} · {created.gst_period}. It expires in <strong>{countdown}</strong>.</p>
+        <p className="mt-2 text-sm font-semibold text-[var(--obliq-info-ink)]">Start OBLIQ Session</p>
+        <p className="mt-2 text-sm leading-6 text-[var(--obliq-muted)]">This QR is unique to {created.base_client_name} · {created.gst_period}. It expires in <strong>{countdown}</strong>.</p>
         <div className="mt-5"><QrAction value={created.start_whatsapp_url} label="Unique OBLIQ START QR"/></div>
         <CopyValue value={created.start_message} onCopy={onCopy}/>
         <div className="mt-4 flex flex-wrap gap-2">
@@ -70,8 +80,9 @@ export function WhatsAppDemoView({created, status, countdown, busy, onCopy, onRe
     </div>
 
     <Card className="mt-6 p-6">
+      {connected && <div className="mb-5 flex items-start gap-3 rounded-2xl border border-[var(--obliq-success-border)] bg-[var(--obliq-success-soft)] p-4 text-[var(--obliq-success-ink)]"><ShieldCheck className="mt-0.5 shrink-0" size={19}/><div><strong>WhatsApp Connected</strong><p className="mt-1 text-sm">The unique session is bound to this cloned GST workspace. Review and send the preserved document request next.</p></div></div>}
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><p className="text-xs font-bold tracking-[.13em] text-[#477ca8]">LIVE STATUS</p><h2 className="mt-2 text-xl font-bold">Session status</h2></div>
+        <div><p className="text-xs font-bold tracking-[.13em] text-[var(--obliq-info-ink)]">LIVE STATUS</p><h2 className="mt-2 text-xl font-bold">Session status</h2></div>
         <Badge value={currentStatus}/>
       </div>
       <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -82,12 +93,12 @@ export function WhatsAppDemoView({created, status, countdown, busy, onCopy, onRe
           ["Last delivery", status?.last_outbound_delivery_status ? formatStatus(status.last_outbound_delivery_status) : "No outbound message"],
           ["Last activity", status?.last_activity_at ? formatDate(status.last_activity_at) : "—"],
           ["Session expiry", formatDate(status?.session_expires_at ?? created.session_expires_at)],
-        ].map(([label, value]) => <div key={label} className="rounded-2xl bg-[#f8f7f5] p-4"><p className="text-xs text-[#77716e]">{label}</p><p className="mt-2 text-sm font-semibold capitalize">{value}</p></div>)}
+        ].map(([label, value]) => <div key={label} className="rounded-2xl bg-[var(--obliq-surface-raised)] p-4"><p className="text-xs text-[var(--obliq-muted)]">{label}</p><p className="mt-2 text-sm font-semibold capitalize">{value}</p></div>)}
       </div>
-      <div className="mt-6 border-t border-[#eeeae6] pt-5">
+      <div className="mt-6 border-t border-[var(--obliq-border)] pt-5">
         <div className="flex items-center gap-2"><MessageCircleMore size={18}/><h3 className="font-bold">Cloned GST checklist</h3></div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          {(status?.checklist ?? []).map(item => <div key={item.id} className="flex items-center justify-between gap-3 rounded-2xl border border-[#e5e2de] p-4">
+          {(status?.checklist ?? []).map(item => <div key={item.id} className="flex items-center justify-between gap-3 rounded-2xl border border-[var(--obliq-border)] p-4">
             <span className="text-sm font-semibold">{item.label}</span>
             <div className="flex flex-wrap justify-end gap-2">
               <Badge value={item.status}/>
@@ -95,12 +106,12 @@ export function WhatsAppDemoView({created, status, countdown, busy, onCopy, onRe
               {item.processing_status && <Badge value={item.processing_status}/>}
             </div>
           </div>)}
-          {!status?.checklist.length && <p className="text-sm text-[#77716e]">Checklist appears after the session is created.</p>}
+          {!status?.checklist.length && <p className="text-sm text-[var(--obliq-muted)]">Checklist appears after the session is created.</p>}
         </div>
       </div>
-      <div className="mt-6 flex items-start gap-3 rounded-2xl bg-[#e8f1fa] p-4 text-sm leading-6 text-[#315d82]"><ShieldCheck className="mt-0.5 shrink-0" size={19}/>Only masked phone digits and live Vonage delivery status are shown. The browser never receives Vonage credentials, signature secrets, or encryption keys.</div>
-      {onReconnect && ["cancelled", "expired"].includes(currentStatus) && <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-        <p className="text-sm text-amber-900">Reconnect explicitly to keep the same retained checklist and uploads. A new single-use START token will be generated.</p>
+      <div className="mt-6 flex items-start gap-3 rounded-2xl bg-[var(--obliq-info-soft)] p-4 text-sm leading-6 text-[var(--obliq-info-ink)]"><ShieldCheck className="mt-0.5 shrink-0" size={19}/>Only masked phone digits and live Vonage delivery status are shown. The browser never receives Vonage credentials, signature secrets, or encryption keys.</div>
+      {onReconnect && ["cancelled", "expired"].includes(currentStatus) && <div className="mt-5 rounded-2xl border border-[var(--obliq-warning-border)] bg-[var(--obliq-warning-soft)] p-4">
+        <p className="text-sm text-[var(--obliq-warning-ink)]">Reconnect explicitly to keep the same retained checklist and uploads. A new single-use START token will be generated.</p>
         <Button className="mt-3" onClick={onReconnect} disabled={busy}><RefreshCw size={16}/>Reconnect WhatsApp</Button>
       </div>}
     </Card>

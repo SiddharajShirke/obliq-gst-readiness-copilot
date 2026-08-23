@@ -66,3 +66,21 @@ def test_ai_record_normalizes_common_indian_date_to_iso_date() -> None:
 
     assert record.document_date is not None
     assert record.document_date.isoformat() == "2026-08-10"
+
+
+def test_ai_record_discards_invalid_provenance_without_discarding_gst_data() -> None:
+    record = NormalizedGSTRecord.model_validate(
+        {
+            "document_type": "gst_special_transactions",
+            "document_number": "RCM/0826/001",
+            "taxable_value": "12500.00",
+            "source_document_id": "document-id",
+            "source_page": " 3 ",
+            "source_row": "A",
+        }
+    )
+
+    assert record.document_number == "RCM/0826/001"
+    assert record.taxable_value == Decimal("12500.00")
+    assert record.source_page == 3
+    assert record.source_row is None

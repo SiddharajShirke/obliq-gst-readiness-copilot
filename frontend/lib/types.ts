@@ -29,6 +29,10 @@ export type GSTApplication = {
   due_date?: string;
   filing_frequency: string;
   status: string;
+  display_status?: string;
+  workflow_percent?: number;
+  effective_application_id?: string;
+  ready_for_filing?: boolean;
   assigned_preparer_id?: string;
   reviewer_id?: string;
   client?: Client;
@@ -110,7 +114,9 @@ export type GSTRecord = {
   rcm_flag?: boolean | null;
   source_page?: number | null;
   source_row?: number | null;
+  source_type?: string | null;
   review_status: string;
+  review_eligible?: boolean;
 };
 
 export type ExtractionPortfolioScope =
@@ -160,6 +166,27 @@ export type Finding = {
   status: string;
   document_id?: string;
   invoice_record_id?: string;
+  evidence_context?: {
+    issue_summary?: string | null;
+    document_name?: string | null;
+    document_category?: string | null;
+    document_number?: string | null;
+    party_name?: string | null;
+    party_gstin?: string | null;
+    document_date?: string | null;
+    taxable_value?: string | number | null;
+    igst?: string | number | null;
+    cgst?: string | number | null;
+    sgst?: string | number | null;
+    cess?: string | number | null;
+    total_tax?: string | number | null;
+    total_document_value?: string | number | null;
+    source_page?: number | null;
+    source_row?: number | null;
+    period_label?: string | null;
+    period_start?: string | null;
+    period_end?: string | null;
+  };
 };
 
 export type WorkflowStep = {

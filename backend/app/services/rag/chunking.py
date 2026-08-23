@@ -80,7 +80,9 @@ def chunk_document(
 
     if current:
         chunks.append(
-            KnowledgeChunk(chunk_index, f"{heading_prefix}{current}".strip(), heading, {"section": heading})
+            KnowledgeChunk(
+                chunk_index, f"{heading_prefix}{current}".strip(), heading, {"section": heading}
+            )
         )
 
     return [chunk for chunk in chunks if len(chunk.content) >= 20]

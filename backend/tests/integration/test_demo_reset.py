@@ -26,12 +26,12 @@ def test_demo_admin_can_restore_seeded_memory_state() -> None:
     assert created.status_code == 201, created.text
 
     before_reset = client.get("/api/v1/clients", headers=AUTH)
-    assert len(before_reset.json()) >= 6
+    assert len(before_reset.json()) >= 2
 
     reset = client.post("/api/v1/demo/reset", headers=AUTH)
     assert reset.status_code == 200, reset.text
-    assert reset.json() == {"status": "reset", "clients": 5, "applications": 5}
+    assert reset.json() == {"status": "reset", "clients": 1, "applications": 1}
 
     after_reset = client.get("/api/v1/clients", headers=AUTH)
-    assert len(after_reset.json()) == 5
+    assert len(after_reset.json()) == 1
     assert all(row["business_name"] != "Temporary Demo Client" for row in after_reset.json())

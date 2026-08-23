@@ -29,9 +29,17 @@ async def ingest_text(
     effective_to: str | None = None,
 ) -> dict[str, Any]:
     checksum = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    existing = await store.list_rows("knowledge_sources", {"firm_id": firm_id, "checksum": checksum}, limit=1)
+    existing = await store.list_rows(
+        "knowledge_sources", {"firm_id": firm_id, "checksum": checksum}, limit=1
+    )
     if existing:
-        return {**existing[0], "skipped": True, "chunk_count": len(await store.list_rows("knowledge_chunks", {"source_id": existing[0]["id"]}))}
+        return {
+            **existing[0],
+            "skipped": True,
+            "chunk_count": len(
+                await store.list_rows("knowledge_chunks", {"source_id": existing[0]["id"]})
+            ),
+        }
 
     source = await store.insert_row(
         "knowledge_sources",

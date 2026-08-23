@@ -9,7 +9,9 @@ from app.api.v1 import (
     demo,
     documents,
     firms,
+    guided_demo,
     health,
+    onboarding,
     rag,
     users,
     whatsapp,
@@ -17,9 +19,11 @@ from app.api.v1 import (
 
 api_router = APIRouter()
 api_router.include_router(health.router)
+api_router.include_router(onboarding.router)
 api_router.include_router(demo.router)
 api_router.include_router(users.router)
 api_router.include_router(firms.router)
+api_router.include_router(guided_demo.router)
 api_router.include_router(clients.router)
 api_router.include_router(applications.router)
 api_router.include_router(documents.router)

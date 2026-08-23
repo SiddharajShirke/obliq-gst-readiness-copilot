@@ -21,5 +21,7 @@ async def reset_demo(
 ) -> dict[str, int | str]:
     del user
     if not settings.demo_mode or not isinstance(store, MemoryStore):
-        raise HTTPException(status_code=409, detail="Demo reset is available only in in-memory demo mode")
+        raise HTTPException(
+            status_code=409, detail="Demo reset is available only in in-memory demo mode"
+        )
     return await store.reset_demo()
