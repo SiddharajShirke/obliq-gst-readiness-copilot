@@ -43,6 +43,7 @@ from app.services.document_processing.processor import (
     persist_uploaded_document,
 )
 from app.services.document_processing.taxonomy import BUSINESS_DOCUMENT_TYPES
+from app.services.rag.document_indexing import index_document, remove_document_chunks
 from app.services.secure_upload import (
     SecureUploadTokenError,
     SecureUploadValidationError,
@@ -349,8 +350,10 @@ async def extraction_portfolio(
 async def bulk_review_extractions(
     application_id: str,
     payload: BulkExtractionReview,
+    background_tasks: BackgroundTasks,
     user: UserContext = Depends(require_roles("firm_admin", "reviewer")),
     store: DataStore = Depends(get_store),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     application = await require_firm_row(store, "applications", application_id, user.firm_id)
     requested_ids = list(dict.fromkeys(payload.record_ids))
@@ -400,6 +403,7 @@ async def bulk_review_extractions(
                     },
                 )
             await store.update_row("documents", document_id, {"processing_status": "approved"})
+            background_tasks.add_task(index_document, store, settings, document_id)
         elif payload.action == "reject":
             if extraction_rows:
                 await store.update_row(
@@ -413,6 +417,7 @@ async def bulk_review_extractions(
                     },
                 )
             await store.update_row("documents", document_id, {"processing_status": "needs_review"})
+            background_tasks.add_task(remove_document_chunks, store, document_id)
 
     await record_audit(
         store,
@@ -557,6 +562,7 @@ async def get_extraction(
 async def update_extraction(
     document_id: str,
     payload: ExtractionUpdate,
+    background_tasks: BackgroundTasks,
     user: Annotated[UserContext, Depends(require_roles("firm_admin", "gst_preparer", "reviewer"))],
     store: Annotated[DataStore, Depends(get_store)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -583,6 +589,7 @@ async def update_extraction(
         },
     )
     await store.update_row("documents", document_id, {"processing_status": "approved"})
+    background_tasks.add_task(index_document, store, settings, document_id)
     await record_audit(
         store,
         firm_id=user.firm_id,
@@ -603,8 +610,10 @@ async def update_extraction(
 async def approve_extraction(
     document_id: str,
     payload: ReviewAction,
+    background_tasks: BackgroundTasks,
     user: Annotated[UserContext, Depends(require_roles("firm_admin", "reviewer"))],
     store: Annotated[DataStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict:
     await require_firm_row(store, "documents", document_id, user.firm_id)
     rows = await store.list_rows("document_extractions", {"document_id": document_id}, limit=1)
@@ -621,6 +630,7 @@ async def approve_extraction(
         },
     )
     await store.update_row("documents", document_id, {"processing_status": "approved"})
+    background_tasks.add_task(index_document, store, settings, document_id)
     assert updated is not None
     return updated
 
@@ -629,6 +639,7 @@ async def approve_extraction(
 async def reject_extraction(
     document_id: str,
     payload: ReviewAction,
+    background_tasks: BackgroundTasks,
     user: Annotated[UserContext, Depends(require_roles("firm_admin", "reviewer"))],
     store: Annotated[DataStore, Depends(get_store)],
 ) -> dict:
@@ -647,6 +658,7 @@ async def reject_extraction(
         },
     )
     await store.update_row("documents", document_id, {"processing_status": "rejected"})
+    background_tasks.add_task(remove_document_chunks, store, document_id)
     assert updated is not None
     return updated
 
