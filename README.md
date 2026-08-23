@@ -11,7 +11,28 @@ GST Co-Pilot is the OBLIQ hiring prototype: one deeply implemented workflow for 
 ## Important Deployment Notice
 
 > [!WARNING]
-> **THE HOSTED BACKEND RUNS ON A MEMORY-CONSTRAINED FREE TIER.** GST Co-Pilot performs document parsing, OCR, AI extraction, embeddings, RAG, reconciliation, and report generation. These backend-heavy operations can be slower on the hosted demo, and the free instance may cold-start or reach its memory limit during heavy workloads. The processing pipeline serializes heavy work to reduce memory spikes, but local execution remains the most reliable way to test the complete workflow.
+> **THE HOSTED BACKEND RUNS ON A MEMORY-CONSTRAINED RENDER FREE TIER.**
+>
+> **GST Co-Pilot performs backend-heavy document parsing, OCR, AI extraction, embeddings, RAG, reconciliation, and report generation. The hosted demonstration can therefore experience cold starts, slower processing, and higher response latency. The free instance can also approach its CPU or memory limits during intensive workflows. Heavy operations are serialized to reduce memory spikes, but the free tier cannot provide the same performance as a larger production instance or a properly configured local environment.**
+>
+> **For the most reliable complete-workflow evaluation, use the local testing setup described below.**
+
+## Important Local Testing Instruction
+
+> [!IMPORTANT]
+> **FOR LOCAL TESTING AND DEVELOPMENT, DOWNLOAD OR CLONE THE `Phase-4` BRANCH.**
+>
+> **The `main` branch is deployment-friendly and configured for the Render backend and Vercel frontend. Use the `Phase-4` branch when running and evaluating the complete workflow locally with the privately shared environment file and the synthetic datasets in [`GST_Co-Pilot_test_Data/`](GST_Co-Pilot_test_Data/).**
+>
+> **Download option: open the [`Phase-4` branch on GitHub](https://github.com/SiddharajShirke/obliq-gst-readiness-copilot/tree/Phase-4), select `Code`, and choose `Download ZIP`.**
+>
+> **Clone the local-development branch directly:**
+>
+> ```bash
+> git clone --branch Phase-4 --single-branch https://github.com/SiddharajShirke/obliq-gst-readiness-copilot.git
+> ```
+>
+> **If the repository is already cloned, run `git fetch origin` and switch to `Phase-4` without deleting or resetting your existing work.**
 
 ### Recommended test setup
 
