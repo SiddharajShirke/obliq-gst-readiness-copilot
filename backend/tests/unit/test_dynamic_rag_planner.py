@@ -1,0 +1,80 @@
+from __future__ import annotations
+
+from app.services.rag.query_planner import deterministic_plan
+
+
+def test_count_tax_invoices_is_a_transaction_count_plan() -> None:
+    plan = deterministic_plan("What is count of tax invoices?")
+
+    assert plan.domain == "transactions"
+    assert plan.operation == "count"
+    assert plan.filters[0].field == "record_kind"
+    assert plan.filters[0].value == "tax_invoice"
+
+
+def test_lowest_total_invoice_value_is_an_exact_minimum_plan() -> None:
+    plan = deterministic_plan("Which tax invoice has the lowest total invoice value?")
+
+    assert plan.domain == "transactions"
+    assert plan.operation == "minimum"
+    assert plan.metric == "invoice_total"
+    assert plan.order_by == "invoice_total"
+    assert plan.limit == 1
+
+
+def test_bare_lowest_amount_requests_clarification() -> None:
+    plan = deterministic_plan("Which tax invoice has the lowest amount?")
+
+    assert plan.operation == "clarify"
+    assert plan.clarification is not None
+    assert "taxable value" in plan.clarification.lower()
+    assert "total gst" in plan.clarification.lower()
+    assert "total invoice value" in plan.clarification.lower()
+
+
+def test_rcm_purchase_threshold_creates_decimal_filter() -> None:
+    plan = deterministic_plan("Show RCM purchase records above 50000")
+
+    assert plan.domain == "transactions"
+    assert plan.operation == "list"
+    assert any(row.field == "rcm_flag" and row.value is True for row in plan.filters)
+    assert any(row.field == "invoice_category" and row.value == "purchase" for row in plan.filters)
+    assert any(
+        row.field == "invoice_total" and row.operator == "gte" and row.value == "50000"
+        for row in plan.filters
+    )
+
+
+def test_gstr2b_only_question_routes_to_reconciliation() -> None:
+    plan = deterministic_plan("Which invoices are only in GSTR-2B?")
+
+    assert plan.domain == "reconciliation"
+    assert plan.operation == "list"
+    assert plan.filters[0].field == "match_status"
+    assert plan.filters[0].value == "gstr2b_only"
+
+
+def test_audit_approval_question_routes_to_audit_events() -> None:
+    plan = deterministic_plan("Who approved the latest extraction?")
+
+    assert plan.domain == "audit"
+    assert plan.operation == "list"
+    assert plan.order_by == "created_at"
+    assert plan.order_direction == "desc"
+
+
+def test_prohibited_delete_action_is_not_plannable() -> None:
+    plan = deterministic_plan("Delete the purchase register")
+
+    assert plan.operation == "clarify"
+    assert plan.action_type is None
+    assert "cannot" in (plan.clarification or "").lower()
+
+
+def test_allowed_review_action_is_a_proposal_not_execution() -> None:
+    plan = deterministic_plan("Mark reconciliation item abc-123 as reviewed")
+
+    assert plan.domain == "reconciliation"
+    assert plan.operation == "propose_action"
+    assert plan.action_type == "mark_reconciliation_reviewed"
+    assert plan.action_parameters == {"item_id": "abc-123"}

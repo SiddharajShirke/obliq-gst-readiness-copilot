@@ -1,0 +1,193 @@
+from __future__ import annotations
+
+import re
+from decimal import Decimal, InvalidOperation
+
+from app.schemas.assistant_tools import (
+    AssistantActionType,
+    FilterOperator,
+    QueryDomain,
+    QueryFilter,
+    QueryOperation,
+    QueryPlan,
+)
+
+_PROHIBITED_ACTIONS = (
+    "delete ",
+    "remove document",
+    "send whatsapp",
+    "send message",
+    "cancel session",
+    "approve filing",
+    "ready for filing",
+    "change owner",
+)
+
+_METRICS = (
+    (("total invoice value", "invoice total", "document value"), "invoice_total"),
+    (("taxable value", "taxable amount"), "taxable_value"),
+    (("total gst", "total tax", "gst amount", "tax amount"), "total_tax"),
+    (("igst",), "igst"),
+    (("cgst",), "cgst"),
+    (("sgst", "sgst/utgst", "utgst"), "sgst_utgst"),
+    (("cess",), "cess"),
+)
+
+
+def _clarification(message: str) -> QueryPlan:
+    return QueryPlan(
+        domain=QueryDomain.APPLICATION,
+        operation=QueryOperation.CLARIFY,
+        clarification=message,
+    )
+
+
+def _metric_from_question(question: str) -> str | None:
+    for phrases, field in _METRICS:
+        if any(phrase in question for phrase in phrases):
+            return field
+    return None
+
+
+def _threshold_filter(question: str, metric: str | None) -> QueryFilter | None:
+    match = re.search(
+        r"\b(above|over|more than|at least|below|under|less than|at most)\s*"
+        r"(?:rs\.?|inr|₹)?\s*([0-9][0-9,]*(?:\.\d+)?)",
+        question,
+    )
+    if not match:
+        return None
+    try:
+        value = format(Decimal(match.group(2).replace(",", "")), "f")
+    except InvalidOperation:
+        return None
+    operator = (
+        FilterOperator.GTE
+        if match.group(1) in {"above", "over", "more than", "at least"}
+        else FilterOperator.LTE
+    )
+    return QueryFilter(field=metric or "invoice_total", operator=operator, value=value)
+
+
+def deterministic_plan(question: str) -> QueryPlan:
+    normalized = " ".join(question.lower().strip().split())
+
+    if any(phrase in normalized for phrase in _PROHIBITED_ACTIONS):
+        return _clarification(
+            "I cannot perform that operation. I can only propose approved CA review actions "
+            "for explicit confirmation."
+        )
+
+    review_match = re.search(
+        r"mark\s+reconciliation\s+item\s+([a-z0-9-]+)\s+as\s+reviewed",
+        normalized,
+    )
+    if review_match:
+        return QueryPlan(
+            domain=QueryDomain.RECONCILIATION,
+            operation=QueryOperation.PROPOSE_ACTION,
+            action_type=AssistantActionType.MARK_RECONCILIATION_REVIEWED,
+            action_parameters={"item_id": review_match.group(1)},
+        )
+
+    if "audit" in normalized or (
+        any(word in normalized for word in ("who", "latest", "when"))
+        and any(word in normalized for word in ("approved", "reviewed", "uploaded"))
+    ):
+        return QueryPlan(
+            domain=QueryDomain.AUDIT,
+            operation=QueryOperation.LIST,
+            order_by="created_at",
+            order_direction="desc",
+            limit=20,
+        )
+
+    if any(term in normalized for term in ("gstr-2b", "gstr2b", "reconciliation")):
+        filters: list[QueryFilter] = []
+        if any(
+            phrase in normalized
+            for phrase in ("only in gstr", "gstr-2b only", "gstr2b only")
+        ):
+            filters.append(QueryFilter(field="match_status", value="gstr2b_only"))
+        elif "books only" in normalized:
+            filters.append(QueryFilter(field="match_status", value="books_only"))
+        return QueryPlan(
+            domain=QueryDomain.RECONCILIATION,
+            operation=QueryOperation.LIST,
+            filters=filters,
+            limit=50,
+        )
+
+    transaction_terms = (
+        "invoice",
+        "transaction",
+        "purchase record",
+        "sales record",
+        "rcm",
+        "taxable value",
+        "total gst",
+    )
+    if any(term in normalized for term in transaction_terms):
+        metric = _metric_from_question(normalized)
+        minimum = any(word in normalized for word in ("lowest", "least", "minimum", "smallest"))
+        maximum = any(word in normalized for word in ("highest", "largest", "maximum"))
+        if (minimum or maximum) and "amount" in normalized and metric is None:
+            return _clarification(
+                "Which amount should I compare: taxable value, total GST, or total invoice value?"
+            )
+
+        filters = []
+        if "tax invoice" in normalized:
+            filters.append(QueryFilter(field="record_kind", value="tax_invoice"))
+        if "rcm" in normalized:
+            filters.append(QueryFilter(field="rcm_flag", value=True))
+        if "purchase" in normalized:
+            filters.append(QueryFilter(field="invoice_category", value="purchase"))
+        elif "sales" in normalized:
+            filters.append(QueryFilter(field="invoice_category", value="sales"))
+
+        threshold = _threshold_filter(normalized, metric)
+        if threshold:
+            filters.append(threshold)
+
+        if any(phrase in normalized for phrase in ("how many", "count of", "number of")):
+            operation = QueryOperation.COUNT
+        elif minimum:
+            operation = QueryOperation.MINIMUM
+        elif maximum:
+            operation = QueryOperation.MAXIMUM
+        elif any(phrase in normalized for phrase in ("average", "mean")):
+            operation = QueryOperation.AVERAGE
+        elif normalized.startswith("sum ") or normalized.startswith("what is the total "):
+            operation = QueryOperation.SUM
+        else:
+            operation = QueryOperation.LIST
+
+        effective_metric = metric
+        is_extreme = operation in {QueryOperation.MINIMUM, QueryOperation.MAXIMUM}
+        if is_extreme and effective_metric is None:
+            effective_metric = "invoice_total"
+        direction = "desc" if operation == QueryOperation.MAXIMUM else "asc"
+        return QueryPlan(
+            domain=QueryDomain.TRANSACTIONS,
+            operation=operation,
+            metric=effective_metric,
+            filters=filters,
+            order_by=effective_metric if is_extreme else None,
+            order_direction=direction,
+            limit=1 if is_extreme else 50,
+        )
+
+    if any(term in normalized for term in ("validation", "finding", "invalid")):
+        return QueryPlan(domain=QueryDomain.VALIDATION, operation=QueryOperation.LIST, limit=50)
+    if "alert" in normalized:
+        return QueryPlan(domain=QueryDomain.ALERTS, operation=QueryOperation.LIST, limit=50)
+    if any(term in normalized for term in ("missing document", "document checklist", "collection")):
+        return QueryPlan(domain=QueryDomain.CHECKLIST, operation=QueryOperation.SUMMARIZE)
+
+    return QueryPlan(
+        domain=QueryDomain.APPLICATION_DOCUMENTS,
+        operation=QueryOperation.EXPLAIN,
+        needs_text_evidence=True,
+        needs_knowledge=True,
+    )
