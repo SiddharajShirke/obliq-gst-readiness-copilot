@@ -12,6 +12,7 @@ from app.prompts.rag import RAG_SYSTEM_PROMPT
 from app.repositories.base import DataStore
 from app.schemas.assistant_tools import QueryDomain, QueryOperation, QueryPlan, StructuredToolResult
 from app.schemas.rag import AssistantModelOutput
+from app.services.assistant_actions import create_action_proposal
 from app.services.audit import record_audit
 from app.services.llm.providers import complete_groq_json
 from app.services.rag.application_context import load_structured_facts
@@ -44,6 +45,8 @@ class RAGState(TypedDict, total=False):
     intent: str
     query_plan: QueryPlan
     structured_result: StructuredToolResult
+    proposed_action: dict[str, Any]
+    user_role: str
     application_data: dict[str, Any]
     application_evidence: list[dict[str, Any]]
     knowledge_evidence: list[dict[str, Any]]
@@ -66,6 +69,7 @@ class _FallbackGraph:
             self.assistant.classify_question,
             self.assistant.load_structured_facts,
             self.assistant.execute_structured_tools,
+            self.assistant.build_action_proposal,
             self.assistant.retrieve_application_evidence,
             self.assistant.retrieve_knowledge_if_needed,
             self.assistant.generate_grounded_answer,
@@ -140,6 +144,7 @@ class RAGAssistant:
             ("classify_question", self.classify_question),
             ("load_structured_facts", self.load_structured_facts),
             ("execute_structured_tools", self.execute_structured_tools),
+            ("build_action_proposal", self.build_action_proposal),
             ("retrieve_application_evidence", self.retrieve_application_evidence),
             ("retrieve_knowledge_if_needed", self.retrieve_knowledge_if_needed),
             ("generate_grounded_answer", self.generate_grounded_answer),
@@ -163,6 +168,7 @@ class RAGAssistant:
         user_id: str,
         conversation_id: str,
         source_type: str | None,
+        role: str = "reviewer",
     ) -> dict[str, Any]:
         history = await self.store.list_rows(
             "assistant_messages",
@@ -185,6 +191,7 @@ class RAGAssistant:
                 "user_id": user_id,
                 "conversation_id": conversation_id,
                 "source_type": source_type,
+                "user_role": role,
                 "history": history,
             }
         )
@@ -302,7 +309,9 @@ class RAGAssistant:
             QueryDomain.AUDIT,
             QueryDomain.DOCUMENTS,
         }
-        if intent != "scope_refusal" and (
+        if intent != "scope_refusal" and plan.operation == QueryOperation.PROPOSE_ACTION:
+            intent = "action_proposal"
+        elif intent != "scope_refusal" and (
             plan.operation == QueryOperation.CLARIFY
             or plan.domain in dynamic_domains
             or (
@@ -340,6 +349,40 @@ class RAGAssistant:
             plan=plan,
         )
         return {"structured_result": result}
+
+    async def build_action_proposal(self, state: RAGState) -> dict[str, Any]:
+        plan = state.get("query_plan")
+        if (
+            not plan
+            or state.get("intent") != "action_proposal"
+            or not plan.action_type
+            or (state.get("application_data") or {}).get("error")
+        ):
+            return {}
+        proposal = await create_action_proposal(
+            self.store,
+            firm_id=state["firm_id"],
+            user_id=state["user_id"],
+            role=state["user_role"],
+            application_id=state["application_id"],
+            conversation_id=state["conversation_id"],
+            action_type=plan.action_type,
+            payload=plan.action_parameters,
+        )
+        preview = proposal.get("preview") or {}
+        return {
+            "proposed_action": {
+                "id": proposal["id"],
+                "action_type": proposal["action_type"],
+                "title": preview.get("title")
+                or str(proposal["action_type"]).replace("_", " ").title(),
+                "preview": preview,
+                "affected_count": int(preview.get("affected_count") or 0),
+                "warnings": ["No application data changes until you explicitly confirm."],
+                "expires_at": proposal["expires_at"],
+                "status": proposal["status"],
+            }
+        }
 
     async def retrieve_application_evidence(self, state: RAGState) -> dict[str, Any]:
         plan = state.get("query_plan")
@@ -690,6 +733,15 @@ class RAGAssistant:
         }
 
     async def generate_grounded_answer(self, state: RAGState) -> dict[str, Any]:
+        if state.get("intent") == "action_proposal" and state.get("proposed_action"):
+            action = state["proposed_action"]
+            return {
+                "draft_answer": (
+                    f"Review the proposed action: {action['title']}. Nothing has changed yet. "
+                    "Confirm it below to execute, or cancel it."
+                ),
+                "confidence": 1.0,
+            }
         if state.get("intent") == "dynamic_structured" and state.get("structured_result"):
             answer, confidence = self._structured_answer(state)
             return {"draft_answer": answer, "confidence": confidence}
@@ -847,7 +899,13 @@ class RAGAssistant:
         draft_answer = state["draft_answer"]
         confidence = state.get("confidence", 0.7)
         plan = state.get("query_plan")
-        safe_uncited = bool(plan and plan.operation == QueryOperation.CLARIFY) or any(
+        safe_uncited = bool(
+            plan
+            and plan.operation in {
+                QueryOperation.CLARIFY,
+                QueryOperation.PROPOSE_ACTION,
+            }
+        ) or any(
             phrase in draft_answer.lower()
             for phrase in (
                 "do not have enough",
@@ -869,6 +927,8 @@ class RAGAssistant:
             "used_application_data": bool(state.get("application_data")),
             "confidence": confidence,
         }
+        if state.get("proposed_action"):
+            answer["proposed_action"] = state["proposed_action"]
         result = state.get("structured_result")
         if result and plan:
             if plan.operation in {

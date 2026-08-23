@@ -40,6 +40,21 @@ class ToolTraceItem(BaseModel):
     row_count: int = 0
 
 
+class ProposedAction(BaseModel):
+    id: str
+    action_type: str
+    title: str
+    preview: dict[str, Any] = Field(default_factory=dict)
+    affected_count: int = 0
+    warnings: list[str] = Field(default_factory=list)
+    expires_at: str
+    status: str
+
+
+class AssistantActionDecision(BaseModel):
+    conversation_id: UUID
+
+
 class AssistantAnswer(BaseModel):
     answer: str
     citations: list[Citation] = Field(default_factory=list)
@@ -50,7 +65,7 @@ class AssistantAnswer(BaseModel):
     calculation: CalculationResult | None = None
     rows: list[dict[str, Any]] = Field(default_factory=list)
     clarification: str | None = None
-    proposed_action: dict[str, Any] | None = None
+    proposed_action: ProposedAction | None = None
     tool_trace: list[ToolTraceItem] = Field(default_factory=list)
 
 

@@ -11,10 +11,39 @@ from app.config import Settings, get_settings
 from app.dependencies import current_user, require_firm_row, require_roles
 from app.repositories import DataStore, get_store
 from app.schemas.auth import UserContext
-from app.schemas.rag import AssistantAnswer, AssistantQuery, KnowledgeTextIngest
+from app.schemas.rag import (
+    AssistantActionDecision,
+    AssistantAnswer,
+    AssistantQuery,
+    KnowledgeTextIngest,
+)
+from app.services.assistant_actions import (
+    ActionConflict,
+    cancel_action_proposal,
+    confirm_action_proposal,
+)
 from app.services.rag.ingestion import ingest_bytes, ingest_text
 
 router = APIRouter(tags=["rag"])
+
+
+def _safe_proposal_status(row: dict) -> dict:
+    result = row.get("result") or {}
+    entity = result.get("entity") or {}
+    return {
+        "id": row.get("id"),
+        "action_type": row.get("action_type"),
+        "status": row.get("status"),
+        "preview": row.get("preview") or {},
+        "expires_at": row.get("expires_at"),
+        "result": {
+            "entity_type": result.get("entity_type"),
+            "entity_id": entity.get("id"),
+            "already_existed": bool(result.get("already_existed")),
+        }
+        if result
+        else None,
+    }
 
 
 @router.post("/knowledge/upload", status_code=201)
@@ -111,4 +140,54 @@ async def assistant_query(
         user_id=user.user_id,
         conversation_id=str(payload.conversation_id),
         source_type=payload.source_type,
+        role=user.role,
     )
+
+
+@router.post("/assistant/actions/{proposal_id}/confirm")
+async def confirm_assistant_action(
+    proposal_id: str,
+    payload: AssistantActionDecision,
+    user: Annotated[UserContext, Depends(current_user)],
+    store: Annotated[DataStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    try:
+        confirmed = await confirm_action_proposal(
+            store,
+            settings,
+            proposal_id=proposal_id,
+            firm_id=user.firm_id,
+            user_id=user.user_id,
+            role=user.role,
+            conversation_id=str(payload.conversation_id),
+        )
+        return _safe_proposal_status(confirmed)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Assistant action proposal not found") from exc
+    except ActionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@router.post("/assistant/actions/{proposal_id}/cancel")
+async def cancel_assistant_action(
+    proposal_id: str,
+    payload: AssistantActionDecision,
+    user: Annotated[UserContext, Depends(current_user)],
+    store: Annotated[DataStore, Depends(get_store)],
+) -> dict:
+    try:
+        cancelled = await cancel_action_proposal(
+            store,
+            proposal_id=proposal_id,
+            firm_id=user.firm_id,
+            user_id=user.user_id,
+            conversation_id=str(payload.conversation_id),
+        )
+        return _safe_proposal_status(cancelled)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Assistant action proposal not found") from exc
+    except ActionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

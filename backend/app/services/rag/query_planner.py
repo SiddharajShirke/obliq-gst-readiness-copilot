@@ -90,6 +90,54 @@ def deterministic_plan(question: str) -> QueryPlan:
             action_parameters={"item_id": review_match.group(1)},
         )
 
+    action_patterns = (
+        (
+            r"mark\s+validation\s+finding\s+([a-z0-9-]+)\s+as\s+reviewed",
+            QueryDomain.VALIDATION,
+            AssistantActionType.MARK_VALIDATION_REVIEWED,
+            "finding_id",
+        ),
+        (
+            r"raise\s+(?:an?\s+)?alert\s+for\s+reconciliation\s+item\s+([a-z0-9-]+)",
+            QueryDomain.RECONCILIATION,
+            AssistantActionType.RAISE_RECONCILIATION_ALERT,
+            "item_id",
+        ),
+        (
+            r"approve\s+extraction\s+for\s+document\s+([a-z0-9-]+)",
+            QueryDomain.EXTRACTIONS,
+            AssistantActionType.APPROVE_EXTRACTION,
+            "document_id",
+        ),
+        (
+            r"reject\s+extraction\s+for\s+document\s+([a-z0-9-]+)",
+            QueryDomain.EXTRACTIONS,
+            AssistantActionType.REJECT_EXTRACTION,
+            "document_id",
+        ),
+        (
+            r"apply\s+validation\s+correction\s+(?:proposal\s+)?([a-z0-9-]+)",
+            QueryDomain.VALIDATION,
+            AssistantActionType.APPLY_VALIDATION_CORRECTION,
+            "correction_proposal_id",
+        ),
+    )
+    for pattern, domain, action_type, parameter in action_patterns:
+        match = re.search(pattern, normalized)
+        if match:
+            return QueryPlan(
+                domain=domain,
+                operation=QueryOperation.PROPOSE_ACTION,
+                action_type=action_type,
+                action_parameters={parameter: match.group(1)},
+            )
+    if "draft" in normalized and "reminder" in normalized:
+        return QueryPlan(
+            domain=QueryDomain.CHECKLIST,
+            operation=QueryOperation.PROPOSE_ACTION,
+            action_type=AssistantActionType.DRAFT_REMINDER,
+        )
+
     if "audit" in normalized or (
         any(word in normalized for word in ("who", "latest", "when"))
         and any(word in normalized for word in ("approved", "reviewed", "uploaded"))

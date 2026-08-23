@@ -78,3 +78,18 @@ def test_allowed_review_action_is_a_proposal_not_execution() -> None:
     assert plan.operation == "propose_action"
     assert plan.action_type == "mark_reconciliation_reviewed"
     assert plan.action_parameters == {"item_id": "abc-123"}
+
+
+def test_other_allowed_actions_are_proposals() -> None:
+    validation = deterministic_plan("Mark validation finding finding-123 as reviewed")
+    alert = deterministic_plan("Raise alert for reconciliation item item-456")
+    reminder = deterministic_plan("Draft a reminder for the missing documents")
+    approve = deterministic_plan("Approve extraction for document document-789")
+
+    assert validation.action_type == "mark_validation_reviewed"
+    assert validation.action_parameters == {"finding_id": "finding-123"}
+    assert alert.action_type == "raise_reconciliation_alert"
+    assert alert.action_parameters == {"item_id": "item-456"}
+    assert reminder.action_type == "draft_reminder"
+    assert approve.action_type == "approve_extraction"
+    assert approve.action_parameters == {"document_id": "document-789"}
