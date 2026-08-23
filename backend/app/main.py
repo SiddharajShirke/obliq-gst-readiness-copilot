@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +18,22 @@ logging.basicConfig(level=settings.log_level)
 logging.getLogger("uvicorn.access").addFilter(UploadTokenRedactionFilter())
 
 
+async def _warm_embeddings_safely() -> None:
+    """Warm the local embedder without delaying the HTTP server startup."""
+    started = time.perf_counter()
+    try:
+        await warm_embedding_provider(settings)
+        logging.getLogger(__name__).info(
+            "RAG embedding provider warmed in %.2fs", time.perf_counter() - started
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logging.getLogger(__name__).error(
+            "RAG embedding warmup failed: %s", type(exc).__name__
+        )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     logging.getLogger(__name__).info(
@@ -27,18 +44,16 @@ async def lifespan(_: FastAPI):
         settings.ai_mode,
         settings.embedding_provider,
     )
+    warmup_task: asyncio.Task[None] | None = None
     if settings.ai_mode == "live" and settings.embedding_provider != "mock":
-        started = time.perf_counter()
-        try:
-            await warm_embedding_provider(settings)
-            logging.getLogger(__name__).info(
-                "RAG embedding provider warmed in %.2fs", time.perf_counter() - started
-            )
-        except Exception as exc:
-            logging.getLogger(__name__).error(
-                "RAG embedding warmup failed: %s", type(exc).__name__
-            )
-    yield
+        warmup_task = asyncio.create_task(_warm_embeddings_safely())
+    try:
+        yield
+    finally:
+        if warmup_task is not None and not warmup_task.done():
+            warmup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await warmup_task
 
 app = FastAPI(
     title=settings.app_name,
