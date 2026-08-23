@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from app.services.rag.query_planner import deterministic_plan
+import pytest
+
+from app.config import Settings
+from app.services.rag.query_planner import deterministic_plan, plan_question
 
 
 def test_count_tax_invoices_is_a_transaction_count_plan() -> None:
@@ -112,3 +115,34 @@ def test_portfolio_validation_and_invoice_lookup_are_structured() -> None:
         row.field == "invoice_number" and row.value == "efi/0826/889"
         for row in invoice.filters
     )
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_dynamic_wording_uses_bounded_validated_planner() -> None:
+    async def complete(*args, **kwargs):
+        return {
+            "domain": "transactions",
+            "operation": "maximum",
+            "metric": "invoice_total",
+            "filters": [{"field": "invoice_category", "value": "purchase"}],
+            "order_by": "invoice_total",
+            "order_direction": "desc",
+            "limit": 1,
+        }
+
+    plan = await plan_question(
+        "Which supplier represents our largest purchases?",
+        Settings(
+            app_env="test",
+            ai_mode="live",
+            groq_api_key="test-key",
+            nvidia_api_key="test-key",
+            nvidia_small_model="test-model",
+            _env_file=None,
+        ),
+        groq_complete=complete,
+    )
+
+    assert plan.domain == "transactions"
+    assert plan.operation == "maximum"
+    assert plan.metric == "invoice_total"

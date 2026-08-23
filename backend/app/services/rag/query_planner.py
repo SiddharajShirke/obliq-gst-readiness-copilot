@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import re
+from collections.abc import Awaitable, Callable
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
+from app.config import Settings
 from app.schemas.assistant_tools import (
     AssistantActionType,
     FilterOperator,
@@ -11,6 +16,9 @@ from app.schemas.assistant_tools import (
     QueryOperation,
     QueryPlan,
 )
+from app.services.llm.providers import complete_groq_json
+
+PlannerComplete = Callable[..., Awaitable[dict[str, Any]]]
 
 _PROHIBITED_ACTIONS = (
     "delete ",
@@ -303,3 +311,72 @@ def deterministic_plan(question: str) -> QueryPlan:
         needs_text_evidence=True,
         needs_knowledge=True,
     )
+
+
+async def plan_question(
+    question: str,
+    settings: Settings,
+    *,
+    groq_complete: PlannerComplete = complete_groq_json,
+) -> QueryPlan:
+    plan = deterministic_plan(question)
+    unresolved = (
+        plan.domain == QueryDomain.APPLICATION_DOCUMENTS
+        and plan.operation == QueryOperation.EXPLAIN
+    )
+    if not unresolved or settings.ai_mode == "mock" or not settings.groq_api_key:
+        return plan
+    contract = {
+        "domains": [value.value for value in QueryDomain],
+        "operations": [value.value for value in QueryOperation],
+        "filter_operators": [value.value for value in FilterOperator],
+        "transaction_fields": sorted(
+            {
+                "document_type",
+                "invoice_category",
+                "record_kind",
+                "supplier_name",
+                "supplier_gstin",
+                "customer_name",
+                "customer_gstin",
+                "invoice_number",
+                "invoice_date",
+                "taxable_value",
+                "igst",
+                "cgst",
+                "sgst_utgst",
+                "cess",
+                "total_tax",
+                "invoice_total",
+                "transaction_type",
+                "itc_status",
+                "rcm_flag",
+                "review_status",
+            }
+        ),
+    }
+    try:
+        output = await asyncio.wait_for(
+            groq_complete(
+                settings,
+                model=settings.effective_groq_rag_model,
+                max_tokens=500,
+                system_prompt=(
+                    "Convert the user question into one JSON QueryPlan. Use only the "
+                    "provided contract. Never generate SQL, access rules, or unlisted actions. "
+                    "If a money metric is ambiguous, return operation=clarify and a short "
+                    "clarification."
+                ),
+                user_prompt=json.dumps(
+                    {"question": question, "contract": contract},
+                    separators=(",", ":"),
+                ),
+            ),
+            timeout=min(1.5, settings.rag_generation_timeout_seconds),
+        )
+        return QueryPlan.model_validate(output)
+    except Exception:
+        return _clarification(
+            "Please rephrase the question with the record type, operation, and exact field "
+            "you want me to use."
+        )

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -67,11 +67,11 @@ class QueryPlan(BaseModel):
     domain: QueryDomain
     operation: QueryOperation
     metric: str | None = None
-    filters: list[QueryFilter] = Field(default_factory=list)
+    filters: list[QueryFilter] = Field(default_factory=list, max_length=12)
     group_by: str | None = None
     order_by: str | None = None
-    order_direction: str = "asc"
-    limit: int | None = None
+    order_direction: Literal["asc", "desc"] = "asc"
+    limit: int | None = Field(default=None, ge=1, le=100)
     needs_text_evidence: bool = False
     needs_knowledge: bool = False
     clarification: str | None = None
