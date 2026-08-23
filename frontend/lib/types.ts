@@ -162,6 +162,76 @@ export type Finding = {
   invoice_record_id?: string;
 };
 
+export type WorkflowStep = {
+  key: string;
+  label: string;
+  state: "completed" | "current" | "pending" | "disabled";
+  progress_percent: number;
+};
+
+export type WorkflowProgress = {
+  application_id: string;
+  application_status: string;
+  current_stage: string;
+  progress_percent: number;
+  steps: WorkflowStep[];
+  extraction: {
+    record_count: number;
+    reviewed_count: number;
+    approved_count: number;
+    rejected_count: number;
+    pending_count: number;
+    progress_percent: number;
+  };
+  validation: {finding_count: number; open_count: number; reviewed_count: number; progress_percent: number};
+  reconciliation: {
+    run_count: number;
+    item_count: number;
+    open_count: number;
+    review_required_count: number;
+    reviewed_count: number;
+    progress_percent: number;
+    available: boolean;
+    status: "not_started" | "in_progress" | "complete";
+    export_enabled: boolean;
+  };
+  readiness: {
+    ready_for_filing: boolean;
+    ready_for_filing_percent: number;
+    main_export_enabled: boolean;
+  };
+};
+
+export type ValidationCategory = {
+  type: string;
+  label: string;
+  requirement_status: "received" | "missing";
+  record_count: number;
+  approved_record_count: number;
+  pending_record_count: number;
+  finding_count: number;
+  open_finding_count: number;
+  alert_count: number;
+  finding_groups: Array<{type: string; label: string; count: number; open_count: number}>;
+  findings: Finding[];
+  alerts: ReconciliationAlert[];
+};
+
+export type ValidationPortfolio = {
+  application_id: string;
+  summary: {
+    category_count: number;
+    received_category_count: number;
+    record_count: number;
+    approved_record_count: number;
+    finding_count: number;
+    open_finding_count: number;
+    alert_count: number;
+  };
+  categories: ValidationCategory[];
+  uncategorized_findings: Finding[];
+};
+
 export type ValidationCorrectionProposal = {
   id: string;
   proposal_type: "manual" | "ai";
@@ -199,6 +269,7 @@ export type ReconciliationResult = {
   status?: string;
   summary: Record<string, number>;
   items: ReconciliationItem[];
+  review_progress?: WorkflowProgress["reconciliation"];
 };
 
 export type AlertExplanation = {
@@ -261,6 +332,7 @@ export type DocumentCollectionStatus = {
   requirements: Requirement[];
   base_application_id: string;
   effective_application_id: string;
+  workflow: WorkflowProgress;
 };
 
 export type Citation = {

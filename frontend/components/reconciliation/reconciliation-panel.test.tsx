@@ -9,6 +9,8 @@ describe("Phase 3 reconciliation panel", () => {
     expect(html).toContain("Start Reconciliation");
     expect(html).toContain("Exact Matches");
     expect(html).toContain("Raise Alert");
+    expect(html).toContain("Select All");
+    expect(html).toContain("Export Reconciliation");
     expect(html).toContain("Select any finding to compare evidence and understand the outcome");
     expect(html).not.toContain("JSON.stringify");
   });

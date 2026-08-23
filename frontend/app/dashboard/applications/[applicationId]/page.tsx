@@ -5,6 +5,7 @@ import {
   Check,
   Circle,
   ClipboardCheck,
+  Download,
   FileText,
   MessageCircleMore,
   RefreshCw,
@@ -26,7 +27,7 @@ import {Card} from "@/components/ui/card";
 import {Textarea} from "@/components/ui/field";
 import {Loading} from "@/components/ui/loading";
 import {LiveWhatsAppDemoLink} from "@/components/whatsapp/live-whatsapp-demo-link";
-import {apiFetch} from "@/lib/api";
+import {apiFetch, preferredExportUrls} from "@/lib/api";
 import {formatDate, formatStatus} from "@/lib/format";
 import type {
   AuditEvent,
@@ -53,8 +54,6 @@ const tabs: Array<[Tab | "assistant", string]> = [
   ["assistant", "RAG Assistant"],
   ["audit", "Audit Trail"],
 ];
-
-const laterStages = ["Ready for CA Review", "Ready for Filing"];
 
 export default function ApplicationWorkspace() {
   const {applicationId} = useParams<{applicationId: string}>();
@@ -205,16 +204,40 @@ export default function ApplicationWorkspace() {
     setDraft(null);
   }
 
+  async function exportPack() {
+    setBusy(true);
+    try {
+      const files = await apiFetch<Record<string, string>>(
+        `/applications/${collection?.effective_application_id ?? applicationId}/export`,
+        {method: "POST"},
+      );
+      for (const url of preferredExportUrls(files, "export_pack_zip")) {
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.target = "_blank";
+        anchor.rel = "noopener noreferrer";
+        anchor.download = "OBLIQ_GST_Preparation_Export_Pack.zip";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      }
+      toast.success("GST preparation export pack generated");
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to export GST preparation pack");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (loading || !application || !collection) return <Loading label="Opening GST workspace…"/>;
 
-  const requested = collection.workflow_status !== "not_started";
   const complete = collection.workflow_status === "documents_complete";
-  const partial = collection.workflow_status === "partially_received";
   const displayApplicationId = collection.effective_application_id;
   const clientName = application.client?.business_name ?? "Client";
-  const extractionStarted = ["extraction_review", "validation_review", "reconciliation_review"].includes(application.status);
-  const validationStarted = ["validation_review", "reconciliation_review"].includes(application.status);
-  const reconciliationStarted = application.status === "reconciliation_review";
+  const workflow = collection.workflow;
+  const extractionStarted = workflow.extraction.record_count > 0;
+  const reconciliationStarted = workflow.reconciliation.run_count > 0;
 
   return <>
     <PageHeader
@@ -226,34 +249,29 @@ export default function ApplicationWorkspace() {
           <ArrowLeft size={17}/>Client
         </Link>
         <LiveWhatsAppDemoLink applicationId={applicationId}/>
-        <Button variant="secondary" disabled title="Available after document processing and review">Export pack</Button>
-        <Button disabled title="Available after document processing and review">Approve readiness</Button>
+        <Button variant="secondary" disabled={busy || !workflow.readiness.main_export_enabled} onClick={() => void exportPack()} title={workflow.readiness.main_export_enabled ? "Download the GST preparation pack" : "Complete Validation Review before exporting the GST preparation pack"}><Download size={16}/>Export Pack</Button>
       </>}
     />
 
     <Card className="mb-6 overflow-hidden">
-      <div className="grid gap-5 bg-[#a4c5e5] p-5 sm:grid-cols-[1fr_auto] sm:items-center">
+      <div className="grid gap-5 bg-[var(--obliq-blue)] p-5 text-[#191515] sm:grid-cols-[1fr_auto] sm:items-center">
         <div>
           <div className="flex flex-wrap items-center gap-3">
-            <Badge value={collection.workflow_status}/>
-            <span className="text-xs font-semibold">{collection.received_count} / {collection.required_count} document categories received</span>
+            <Badge value={workflow.current_stage}/>
+            <span className="text-xs font-semibold">{workflow.extraction.reviewed_count}/{workflow.extraction.record_count} extracted records reviewed · {workflow.validation.open_count} validation findings open</span>
           </div>
           <div className="mt-4 h-2 max-w-xl overflow-hidden rounded-full bg-white/60">
-            <div className="h-full rounded-full bg-[#191515] transition-all" style={{width: `${collection.progress_percent}%`}}/>
+            <div className="h-full rounded-full bg-[#191515] transition-all" style={{width: `${workflow.progress_percent}%`}}/>
           </div>
+          <p className="mt-2 text-xs font-semibold">Document collection: {collection.received_count}/{collection.required_count} ({collection.progress_percent}%)</p>
         </div>
-        <div className="text-right"><strong className="text-3xl">{collection.progress_percent}%</strong><p className="text-xs">collection progress</p></div>
+        <div className="text-right"><strong className="text-3xl">{workflow.progress_percent}%</strong><p className="text-xs">overall workflow progress</p></div>
       </div>
-      <div className="overflow-x-auto border-t border-[#eeeae6] bg-white p-4">
+      <div className="overflow-x-auto border-t border-[var(--obliq-border)] bg-[var(--obliq-surface)] p-4">
         <div className="flex min-w-[920px] items-center">
-          <Stage label="Documents Requested" completed={requested} current={!requested}/>
-          <Stage label="Partially Received" completed={complete} current={partial}/>
-          <Stage label="Documents Received" completed={complete} current={complete}/>
-          <Stage label="Extraction Review" completed={validationStarted} current={extractionStarted && !validationStarted}/>
-          <Stage label="Validation Review" completed={reconciliationStarted} current={validationStarted && !reconciliationStarted}/>
-          <Stage label="Reconciliation Review" current={reconciliationStarted}/>
-          {laterStages.map(label => <Stage key={label} label={label} disabled/>)}
+          {workflow.steps.map(step => <Stage key={step.key} label={step.label} state={step.state} progress={step.progress_percent}/>)}
         </div>
+        <p className="mt-3 text-xs text-[var(--obliq-muted)]">Validation is the readiness gate. GSTR-2B reconciliation is an independent CA review branch and does not block the main export.</p>
       </div>
     </Card>
 
@@ -296,12 +314,19 @@ export default function ApplicationWorkspace() {
           <div className="mt-4 rounded-2xl border border-[#e5e2de] p-4"><p className="text-xs text-[#77716e]">Current Status</p><p className="mt-2 font-bold">{collectionStatus}</p></div>
         </Card>
         <Card className="p-5">
-          <h2 className="font-bold">Phase 3 workflow</h2>
+          <h2 className="font-bold">GST Preparation Readiness</h2>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            {[
+              ["Extraction Review", `${workflow.steps.find(step => step.key === "extraction_review")?.progress_percent ?? 0}%`],
+              ["Validation Review", `${workflow.validation.progress_percent}%`],
+              ["Ready for Filing", workflow.readiness.ready_for_filing ? "✓ 100%" : "Pending"],
+              ["GSTR-2B Review", `${workflow.reconciliation.progress_percent}%`],
+            ].map(([label, value]) => <div key={label} className="rounded-2xl bg-[var(--obliq-surface-raised)] p-4"><p className="text-xl font-bold">{value}</p><p className="mt-1 text-xs text-[var(--obliq-muted)]">{label}</p></div>)}
+          </div>
           <ul className="mt-4 grid gap-3 text-sm text-[#625d5a]">
-            <li className="flex gap-2"><ClipboardCheck size={17}/> Messages require CA review before sending.</li>
-            <li className="flex gap-2"><ClipboardCheck size={17}/> Uploaded originals stay private in Supabase Storage.</li>
-            <li className="flex gap-2"><ClipboardCheck size={17}/> Extraction, validation and reconciliation require CA review.</li>
-            <li className="flex gap-2"><ClipboardCheck size={17}/> Filing readiness remains unavailable.</li>
+            <li className="flex gap-2"><ClipboardCheck size={17}/> Validation completion deterministically activates Ready for Filing and Export Pack.</li>
+            <li className="flex gap-2"><ClipboardCheck size={17}/> Reconciliation remains an independent optional review working.</li>
+            <li className="flex gap-2"><ClipboardCheck size={17}/> OBLIQ does not file or submit data to the GST Portal.</li>
           </ul>
         </Card>
       </div>
@@ -341,12 +366,15 @@ export default function ApplicationWorkspace() {
   </>;
 }
 
-function Stage({label, completed = false, current = false, disabled = false}: {label: string; completed?: boolean; current?: boolean; disabled?: boolean}) {
+function Stage({label, state, progress}: {label: string; state: "completed" | "current" | "pending" | "disabled"; progress: number}) {
+  const completed = state === "completed";
+  const current = state === "current";
+  const disabled = state === "disabled";
   return <div className="flex flex-1 items-center">
-    <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full border text-xs font-bold ${completed ? "border-[#191515] bg-[#191515] text-white" : current ? "border-[#477ca8] bg-[#e8f1fa] text-[#315d82]" : "border-[#d9d4cf] bg-white text-[#8a8480]"}`}>
+    <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full border text-xs font-bold ${completed ? "border-[var(--obliq-action)] bg-[var(--obliq-action)] text-[var(--obliq-action-ink)]" : current ? "border-[var(--obliq-focus)] bg-[var(--obliq-blue-soft)] text-[var(--obliq-info-ink)]" : "border-[var(--obliq-border)] bg-[var(--obliq-surface-raised)] text-[var(--obliq-muted)]"}`}>
       {completed ? <Check size={14}/> : <Circle size={10} fill={current ? "currentColor" : "none"}/>}
     </span>
-    <span className={`ml-2 text-[11px] font-semibold ${disabled ? "text-[#aaa4a0]" : "text-[#191515]"}`}>{label}</span>
-    <span className="mx-3 h-px flex-1 bg-[#ded9d4]"/>
+    <span className={`ml-2 text-[11px] font-semibold ${disabled ? "text-[var(--obliq-muted)] opacity-60" : "text-[var(--obliq-ink)]"}`}>{label}{current && progress > 0 && progress < 100 ? ` · ${progress}%` : ""}</span>
+    <span className="mx-3 h-px flex-1 bg-[var(--obliq-border)]"/>
   </div>;
 }

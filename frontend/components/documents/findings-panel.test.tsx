@@ -12,6 +12,8 @@ describe("validation findings panel", () => {
     expect(html).toContain("Portfolio");
     expect(html).toContain("Table");
     expect(html).toContain("Manual corrections and AI recommendations always require CA confirmation");
+    expect(html).toContain("Select All");
+    expect(html).toContain("Select all visible validation findings");
     expect(html).not.toContain("JSON.stringify");
   });
 });

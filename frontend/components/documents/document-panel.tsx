@@ -5,6 +5,7 @@ import {useCallback, useEffect, useState} from "react";
 import {toast} from "sonner";
 import {apiFetch, resolveAssetUrl} from "../../lib/api";
 import {formatDate, formatStatus} from "../../lib/format";
+import {selectAllVisible} from "../../lib/review-selection";
 import type {
   DocumentRecord,
   Extraction,
@@ -209,8 +210,13 @@ export function DocumentPanel({applicationId, checklist, onChanged}: Props) {
         setSelectedRecordIds(new Set());
       }}
       onModeChange={setPortfolioMode}
-      onSearchChange={setSearch}
+      onSearchChange={value => {
+        setSearch(value);
+        setSelectedRecordIds(new Set());
+      }}
       onToggleSelection={toggleRecordSelection}
+      onSelectVisible={(ids, checked) => setSelectedRecordIds(current =>
+        selectAllVisible(current, ids, checked))}
       onInspect={setSelectedRecord}
       onBulkReview={actionName => void bulkReview(actionName)}
     />

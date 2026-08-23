@@ -113,4 +113,12 @@ export async function apiFetch<T>(
     : response.text()) as Promise<T>;
 }
 
+export function preferredExportUrls(
+  files: Record<string, string>,
+  archiveKey: string,
+): string[] {
+  const archiveUrl = files[archiveKey];
+  return archiveUrl ? [archiveUrl] : Object.values(files);
+}
+
 export {API_BASE};

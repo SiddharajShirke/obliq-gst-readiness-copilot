@@ -44,6 +44,7 @@ describe("extraction portfolio", () => {
         onModeChange={() => undefined}
         onSearchChange={() => undefined}
         onToggleSelection={() => undefined}
+        onSelectVisible={() => undefined}
         onInspect={() => undefined}
         onBulkReview={() => undefined}
       />,
@@ -71,6 +72,7 @@ describe("extraction portfolio", () => {
         onModeChange={() => undefined}
         onSearchChange={() => undefined}
         onToggleSelection={() => undefined}
+        onSelectVisible={() => undefined}
         onInspect={() => undefined}
         onBulkReview={() => undefined}
       />,
@@ -79,6 +81,7 @@ describe("extraction portfolio", () => {
     expect(html).toContain("Approve selected");
     expect(html).toContain("Reject selected");
     expect(html).toContain("A confirmation preview appears before changes are saved");
+    expect(html).toContain("Select All");
   });
 
   it("renders a large record review workspace with evidence and guarded actions", () => {

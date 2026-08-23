@@ -7,6 +7,7 @@ const {getSupabaseBrowserClient} = vi.hoisted(() => ({
 vi.mock("./supabase", () => ({getSupabaseBrowserClient}));
 
 import {apiFetch} from "./api";
+import * as apiModule from "./api";
 
 class MemoryStorage {
   values = new Map<string, string>();
@@ -117,5 +118,17 @@ describe("apiFetch Supabase bearer handling", () => {
     await expect(apiFetch("/clients")).rejects.toMatchObject({status: 401});
     expect(storage.getItem("obliq_access_token")).toBeNull();
     expect(storage.getItem("obliq_user")).toBeNull();
+  });
+});
+
+describe("export download selection", () => {
+  it("prefers one archive URL over browser-blocked multi-file downloads", () => {
+    expect(apiModule).toHaveProperty("preferredExportUrls");
+    const select = (apiModule as typeof apiModule & {
+      preferredExportUrls: (files: Record<string, string>, packKey: string) => string[];
+    }).preferredExportUrls;
+    expect(select({report: "report-url", export_pack_zip: "pack-url"}, "export_pack_zip"))
+      .toEqual(["pack-url"]);
+    expect(select({report: "report-url"}, "export_pack_zip")).toEqual(["report-url"]);
   });
 });
