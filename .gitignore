@@ -2,6 +2,7 @@
 .env
 .env.local
 .runtime/
+.superpowers/
 *.pem
 *.key
 
