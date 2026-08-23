@@ -19,6 +19,14 @@ logging.getLogger("uvicorn.access").addFilter(UploadTokenRedactionFilter())
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    logging.getLogger(__name__).info(
+        "Starting OBLIQ environment=%s database=%s whatsapp=%s ai=%s embedding=%s",
+        settings.app_env,
+        "memory" if settings.use_in_memory_db else "supabase",
+        settings.whatsapp_provider,
+        settings.ai_mode,
+        settings.embedding_provider,
+    )
     if settings.ai_mode == "live" and settings.embedding_provider != "mock":
         started = time.perf_counter()
         try:

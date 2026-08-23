@@ -43,8 +43,8 @@ class Settings(BaseSettings):
 
     ai_mode: str = "mock"
     text_llm_provider: str = "groq"
-    vision_llm_provider: str = "gemini"
-    llm_fallback_provider: str = "openai"
+    vision_llm_provider: str = "nvidia"
+    llm_fallback_provider: str = "groq"
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
     groq_heavy_model: str = ""
@@ -152,6 +152,39 @@ class Settings(BaseSettings):
         missing = [name for name, value in required.items() if not value]
         if missing:
             raise ValueError("Live Phase 3 AI configuration is incomplete: " + ", ".join(missing))
+        return self
+
+    @model_validator(mode="after")
+    def validate_production_runtime(self) -> Settings:
+        if self.app_env.lower() != "production":
+            return self
+
+        violations: list[str] = []
+        if self.use_in_memory_db:
+            violations.append("USE_IN_MEMORY_DB=false")
+        if self.ai_mode != "live":
+            violations.append("AI_MODE=live")
+        if self.app_debug:
+            violations.append("APP_DEBUG=false")
+        if not self.supabase_url:
+            violations.append("SUPABASE_URL")
+        if not self.supabase_service_role_key:
+            violations.append("SUPABASE_SERVICE_ROLE_KEY")
+        if not self.frontend_url.startswith("https://"):
+            violations.append("FRONTEND_URL must be an HTTPS origin")
+        if not self.public_base_url.startswith("https://"):
+            violations.append("PUBLIC_BASE_URL must be an HTTPS origin")
+        if not self.cors_origins or any(
+            not origin.startswith("https://") for origin in self.cors_origins
+        ):
+            violations.append("CORS_ORIGINS must contain only HTTPS production origins")
+        if self.embedding_dimension != 384:
+            violations.append("EMBEDDING_DIMENSION=384")
+
+        if violations:
+            raise ValueError(
+                "Production configuration is unsafe or incomplete: " + ", ".join(violations)
+            )
         return self
 
     @property

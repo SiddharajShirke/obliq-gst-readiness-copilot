@@ -1,6 +1,9 @@
 # Secrets and runtime files
 .env
 .env.local
+.env.*
+!.env.example
+!**/.env.local.example
 .runtime/
 .superpowers/
 *.pem
@@ -26,6 +29,8 @@ coverage/
 # Generated demo/export data
 demo_data/documents/generated/
 exports/
+*.generated.pdf
+*.generated.zip
 
 # Supabase local
 supabase/.branches/

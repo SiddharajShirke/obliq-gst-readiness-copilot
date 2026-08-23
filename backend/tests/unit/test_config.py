@@ -4,6 +4,42 @@ from pydantic import ValidationError
 from app.config import Settings
 
 
+def production_values(**overrides: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "app_env": "production",
+        "app_debug": False,
+        "demo_mode": False,
+        "use_in_memory_db": False,
+        "frontend_url": "https://obliq.example",
+        "backend_url": "https://api.obliq.example",
+        "cors_origins": ["https://obliq.example"],
+        "supabase_url": "https://project.supabase.co",
+        "supabase_anon_key": "public-anon-key",
+        "supabase_service_role_key": "service-role-key",
+        "ai_mode": "live",
+        "vision_llm_provider": "nvidia",
+        "groq_api_key": "groq-key",
+        "groq_heavy_model": "groq-model",
+        "nvidia_api_key": "nvidia-key",
+        "nvidia_base_url": "https://integrate.api.nvidia.com/v1",
+        "nvidia_small_model": "nvidia-model",
+        "embedding_dimension": 384,
+        "whatsapp_provider": "vonage",
+        "vonage_api_key": "api-key",
+        "vonage_api_secret": "api-secret",
+        "vonage_signature_secret": "signature-secret",
+        "vonage_whatsapp_from": "447700900001",
+        "vonage_sandbox_join_message": "allow test",
+        "public_base_url": "https://api.obliq.example",
+        "whatsapp_demo_token_pepper": "demo-pepper",
+        "whatsapp_phone_hash_pepper": "phone-pepper",
+        "whatsapp_phone_encryption_key": "fernet-key",
+        "upload_token_pepper": "upload-pepper",
+    }
+    values.update(overrides)
+    return values
+
+
 def test_settings_parse_comma_separated_cors_origins(monkeypatch) -> None:
     monkeypatch.setenv(
         "CORS_ORIGINS",
@@ -68,3 +104,38 @@ def test_default_secure_upload_extensions_include_docx() -> None:
     settings = Settings(app_env="test", whatsapp_provider="mock", _env_file=None)
 
     assert "docx" in settings.allowed_extensions
+
+
+def test_active_default_vision_provider_is_nvidia_not_gemini() -> None:
+    settings = Settings(app_env="test", whatsapp_provider="mock", _env_file=None)
+
+    assert settings.vision_llm_provider == "nvidia"
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"use_in_memory_db": True}, "USE_IN_MEMORY_DB=false"),
+        ({"ai_mode": "mock"}, "AI_MODE=live"),
+        ({"app_debug": True}, "APP_DEBUG=false"),
+        ({"frontend_url": "http://localhost:3000"}, "FRONTEND_URL"),
+        ({"public_base_url": "http://localhost:8000"}, "PUBLIC_BASE_URL"),
+        ({"cors_origins": ["http://localhost:3000"]}, "CORS_ORIGINS"),
+        ({"supabase_service_role_key": ""}, "SUPABASE_SERVICE_ROLE_KEY"),
+        ({"embedding_dimension": 768}, "EMBEDDING_DIMENSION=384"),
+    ],
+)
+def test_production_runtime_rejects_non_deployable_configuration(
+    override: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        Settings(**production_values(**override), _env_file=None)
+
+
+def test_production_runtime_accepts_hosted_phase4_configuration() -> None:
+    settings = Settings(**production_values(), _env_file=None)
+
+    assert settings.use_in_memory_db is False
+    assert settings.ai_mode == "live"
+    assert settings.whatsapp_provider == "vonage"

@@ -1,0 +1,90 @@
+services:
+  - type: web
+    name: obliq-api
+    runtime: docker
+    branch: main
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/v1/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: DEMO_MODE
+        value: "false"
+      - key: USE_IN_MEMORY_DB
+        value: "false"
+      - key: AI_MODE
+        value: live
+      - key: TEXT_LLM_PROVIDER
+        value: groq
+      - key: VISION_LLM_PROVIDER
+        value: nvidia
+      - key: LLM_FALLBACK_PROVIDER
+        value: groq
+      - key: EMBEDDING_PROVIDER
+        value: local
+      - key: EMBEDDING_MODEL
+        value: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      - key: EMBEDDING_DIMENSION
+        value: "384"
+      - key: WHATSAPP_PROVIDER
+        value: vonage
+      - key: FRONTEND_URL
+        sync: false
+      - key: BACKEND_URL
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_DOCUMENTS_BUCKET
+        value: gst-documents
+      - key: SUPABASE_KNOWLEDGE_BUCKET
+        value: knowledge-documents
+      - key: SUPABASE_EXPORTS_BUCKET
+        value: exports
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        sync: false
+      - key: GROQ_HEAVY_MODEL
+        sync: false
+      - key: GROQ_RAG_MODEL
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: NVIDIA_BASE_URL
+        sync: false
+      - key: NVIDIA_SMALL_MODEL
+        sync: false
+      - key: NVIDIA_VISION_MODEL
+        sync: false
+      - key: OCR_ENABLED
+        value: "true"
+      - key: UPLOAD_TOKEN_PEPPER
+        sync: false
+      - key: VONAGE_API_KEY
+        sync: false
+      - key: VONAGE_API_SECRET
+        sync: false
+      - key: VONAGE_SIGNATURE_SECRET
+        sync: false
+      - key: VONAGE_WHATSAPP_FROM
+        sync: false
+      - key: VONAGE_SANDBOX_JOIN_MESSAGE
+        sync: false
+      - key: VONAGE_MESSAGES_BASE_URL
+        value: https://messages-sandbox.nexmo.com
+      - key: WHATSAPP_DEMO_TOKEN_PEPPER
+        sync: false
+      - key: WHATSAPP_PHONE_HASH_PEPPER
+        sync: false
+      - key: WHATSAPP_PHONE_ENCRYPTION_KEY
+        sync: false
