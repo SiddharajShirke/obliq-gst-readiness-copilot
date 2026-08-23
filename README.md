@@ -41,6 +41,90 @@ GST Co-Pilot is the OBLIQ hiring prototype: one deeply implemented workflow for 
 - The environment file contains sensitive credentials. Access should remain restricted to authorized reviewers and must never be committed or shared publicly.
 - Safe variable names and placeholders are available in [`.env.example`](.env.example).
 
+## Reviewer Guidance
+
+> [!TIP]
+> **Choose the deployed review for a quick product walkthrough, or run the `Phase-4` branch locally for the most reliable complete technical evaluation. Use only the synthetic files in [`GST_Co-Pilot_test_Data/`](GST_Co-Pilot_test_Data/); never upload real taxpayer information to the prototype.**
+
+### Choose a review path
+
+| Review path | How to access it | What to expect |
+|---|---|---|
+| **Deployed prototype** | Open the [Vercel application](https://obliq-gst-readiness-copilot.vercel.app/), then register or sign in. | Best for reviewing the product experience. Render free-tier cold starts and backend-heavy processing can introduce noticeable latency. |
+| **Local technical review** | [Download `Phase-4`](https://github.com/SiddharajShirke/obliq-gst-readiness-copilot/tree/Phase-4) or clone it with `git clone --branch Phase-4 --single-branch https://github.com/SiddharajShirke/obliq-gst-readiness-copilot.git`. | Recommended for source inspection and the complete end-to-end workflow. Follow [Local Development Setup](#local-development-setup) and use the privately shared environment file. |
+
+### Start a local reviewer session
+
+1. Download or clone `Phase-4`, then place the privately shared environment file at the repository root as `.env`.
+2. Create `frontend/.env.local` from [`frontend/.env.local.example`](frontend/.env.local.example) and keep only browser-safe `NEXT_PUBLIC_*` values there.
+3. Follow [Local Development Setup](#local-development-setup) to install the Python and npm dependencies.
+4. Start FastAPI on `http://localhost:8000` and verify [`/api/v1/health`](http://localhost:8000/api/v1/health).
+5. Start Next.js with `npm.cmd run dev` from `frontend/`, then open [http://localhost:3000](http://localhost:3000).
+6. Register or sign in and follow the same Guided Demo walkthrough used by the deployed prototype.
+
+### Review flow at a glance
+
+```mermaid
+flowchart TD
+    Choice{Choose review path}
+    Choice -->|Hosted| Live[Open the Vercel application]
+    Choice -->|Local| Local[Run the Phase-4 branch locally]
+    Live --> Login[Register or sign in]
+    Local --> Login
+    Login --> Demo[Start the Guided Demo]
+    Demo --> Request[Draft request and connect Vonage]
+    Request --> Upload[Upload and submit synthetic documents]
+    Upload --> Extract[Extraction and CA review]
+    Extract --> Validate[Validation review]
+    Validate --> Ready[Ready for Filing and Export Pack]
+    Validate --> Reconcile[GSTR-2B reconciliation]
+    Reconcile --> Alerts[Findings, alerts and reconciliation report]
+    Demo -.-> Assist[RAG Assistant and Audit Trail]
+```
+
+### Walk through the prototype
+
+1. **Register or sign in.** The first authenticated bootstrap creates the reviewer’s firm workspace and one tenant-scoped Raj Traders Guided Demo template.
+2. **Start the Guided Demo.** From Overview, select **Guided Demo** to create a fresh isolated run such as `Guided Demo 1`. The walkthrough uses the real application services and persisted workflow state.
+3. **Draft the request.** Open the GST workspace, select **Draft Request**, and review the six-category document request before sending anything.
+4. **Connect Vonage in order.** Scan QR 1 to join the Vonage WhatsApp Sandbox, then scan QR 2 to send the unique OBLIQ `START` message. Wait for **WhatsApp Connected** before continuing.
+5. **Send the approved request.** Review the preserved message and secure upload link, then explicitly approve sending it through Vonage.
+6. **Upload synthetic documents.** Open the secure upload page and use individual files, a browser folder, or a ZIP from [`GST_Co-Pilot_test_Data/`](GST_Co-Pilot_test_Data/). Uploads remain private in Supabase Storage.
+7. **Submit the uploaded batch.** Select **Submit documents for extraction** after the files are stored. The page returns to Overview while parsing, OCR, extraction, and normalization continue in the backend. Approved, indexable evidence later follows the application-scoped RAG indexing rules.
+8. **Review Documents & Extraction.** Open each document portfolio, compare the original evidence with normalized GST fields, and use **Approve**, **Edit & Approve**, or **Reject/Clarify**. Bulk review remains an explicit CA action.
+9. **Complete Validation.** Inspect the deterministic evidence for every finding. Use manual correction or request an AI recommendation, review the before/after preview, and explicitly confirm any change. Resolve or accept all required findings.
+10. **Verify the readiness branch.** At Validation 100%, **Ready for Filing** and the main **Export Pack** become available. GSTR-2B Reconciliation becomes available independently and does not block readiness.
+11. **Generate the GST Export Pack.** Download the preparatory report and CSV working files. Confirm that it describes preparation and review—it does not claim that OBLIQ filed a GST return.
+12. **Review GSTR-2B separately.** Upload the supplied GSTR-2B file, start deterministic reconciliation, inspect Books-versus-GSTR-2B evidence, mark findings reviewed, optionally raise an alert, and generate the reconciliation working after review reaches 100%.
+13. **Try the scoped assistant.** Open **Ask OBLIQ** inside the application and ask about missing documents, extracted records, validation, reconciliation, or raised alerts. Confirm that answers remain application-scoped and include sources when evidence is available.
+14. **Inspect the Audit Trail.** Confirm that meaningful workflow actions—requests, reviews, corrections, alerts, readiness, and exports—are recorded without storing hidden AI reasoning.
+
+### Review the codebase in this order
+
+| Area | Start here | What to inspect |
+|---|---|---|
+| Frontend workflow | [`frontend/app/dashboard/`](frontend/app/dashboard/) and [`frontend/components/`](frontend/components/) | Application routing, Guided Demo, document portfolios, validation, reconciliation, alerts, RAG drawer, themes, and responsive UI. |
+| API boundary | [`backend/app/api/v1/`](backend/app/api/v1/) | Authenticated application-scoped endpoints for collection, processing, review, reconciliation, assistant actions, audit, and reports. |
+| Business services | [`backend/app/services/`](backend/app/services/) | Deterministic workflow logic, secure intake, validation, readiness, reports, WhatsApp coordination, and AI boundaries. |
+| Document and AI pipeline | [`backend/app/services/document_processing/`](backend/app/services/document_processing/) and [`backend/app/agents/`](backend/app/agents/) | Parser/OCR routing, normalized records, LangGraph orchestration, controlled tools, and provider fallbacks. |
+| Persistence and isolation | [`backend/app/repositories/`](backend/app/repositories/) and [`supabase/migrations/`](supabase/migrations/) | Supabase access, private Storage metadata, tenant/application ownership, RLS, pgvector, and retrieval RPCs. |
+| Verification | [`backend/tests/`](backend/tests/) and the frontend `*.test.ts(x)` files | Regression coverage for security, processing, review, reconciliation, RAG scope, readiness, reports, and UI behavior. |
+
+### What the reviewer should verify
+
+| Area | Action | Expected evidence |
+|---|---|---|
+| Isolation | Start or restart Guided Demo | A fresh numbered run and cloned GST application; previous completed runs remain visible. |
+| Collection | Draft, connect, send, upload, and submit | Six-category checklist progress, private document records, and a background extraction batch. |
+| Human review | Approve or correct extracted data | Persisted review status, before/after confirmation for edits, and corresponding audit entries. |
+| Validation | Review all required findings | Backend-derived Validation 100% and Ready for Filing 100%. |
+| Reconciliation | Compare Books with GSTR-2B | Deterministic result types, exact field evidence, explicit CA review, and optional raised alerts. |
+| RAG | Ask an application-specific question | Grounded answer, application-scoped evidence, useful citations, or a clear abstention when evidence is unavailable. |
+| Reports | Generate both available exports | GST preparatory Export Pack after validation; reconciliation working only after reconciliation review completion. |
+
+> [!NOTE]
+> **AI assists with extraction, explanations, correction proposals, and grounded answers. Deterministic services calculate workflow progress, validation/reconciliation status, and export eligibility. The CA retains control of approvals and final GST or ITC decisions.**
+
 ## Live Application
 
 [Open GST Co-Pilot](https://obliq-gst-readiness-copilot.vercel.app/)
