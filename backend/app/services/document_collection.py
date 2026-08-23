@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from app.repositories.base import DataStore
@@ -25,22 +26,30 @@ async def get_document_collection_status(
         round(received_count * 100 / required_count) if required_count else 100
     )
 
-    application = await store.get_row("applications", application_id)
-    request_rows = await store.list_rows(
-        "reminders",
-        {"application_id": application_id, "reminder_type": "initial_document_request"},
-        order="created_at",
-        desc=True,
-        limit=1,
-    )
     if required_count == received_count:
         workflow_status = COLLECTION_COMPLETE
     elif received_count:
         workflow_status = "partially_received"
-    elif request_rows or (application and application.get("status") == "documents_requested"):
-        workflow_status = "documents_requested"
     else:
-        workflow_status = "not_started"
+        application, request_rows = await asyncio.gather(
+            store.get_row("applications", application_id),
+            store.list_rows(
+                "reminders",
+                {
+                    "application_id": application_id,
+                    "reminder_type": "initial_document_request",
+                },
+                order="created_at",
+                desc=True,
+                limit=1,
+            ),
+        )
+        workflow_status = (
+            "documents_requested"
+            if request_rows
+            or (application and application.get("status") == "documents_requested")
+            else "not_started"
+        )
 
     return {
         "required_count": required_count,

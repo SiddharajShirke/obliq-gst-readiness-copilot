@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 from typing import Any
 
@@ -98,12 +99,31 @@ async def get_reconciliation_summary(store: DataStore, application_id: str) -> d
     return {**runs[0], "items": items}
 
 
+async def get_reconciliation_overview(
+    store: DataStore, application_id: str
+) -> dict[str, Any]:
+    runs = await store.list_rows(
+        "reconciliation_runs",
+        {"application_id": application_id},
+        order="created_at",
+        desc=True,
+        limit=1,
+    )
+    return runs[0] if runs else {"summary": {}}
+
+
 async def get_reconciliation_item(
     store: DataStore,
     application_id: str,
     question: str,
 ) -> dict[str, Any] | None:
     reconciliation = await get_reconciliation_summary(store, application_id)
+    return find_reconciliation_item(reconciliation, question)
+
+
+def find_reconciliation_item(
+    reconciliation: dict[str, Any], question: str
+) -> dict[str, Any] | None:
     normalized_question = normalize_invoice_number(question)
     for item in reconciliation.get("items", []):
         evidence = item.get("evidence") or {}
@@ -149,12 +169,15 @@ async def load_structured_facts(
     application_id: str,
     question: str,
     intent: str,
+    application: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    application = await store.get_row("applications", application_id)
+    application = application or await store.get_row("applications", application_id)
     if not application:
         return {"error": "Application not found"}
-    client = await store.get_row("clients", application["client_id"])
-    collection = await get_document_collection_status(store, application_id)
+    client, collection = await asyncio.gather(
+        store.get_row("clients", application["client_id"]),
+        get_document_collection_status(store, application_id),
+    )
     facts: dict[str, Any] = {
         "application": {
             key: application.get(key)
@@ -169,19 +192,26 @@ async def load_structured_facts(
         },
         "collection": collection,
     }
+    pending: dict[str, Any] = {}
     if intent in {"extraction_summary", "guidance"}:
-        facts["extraction_summary"] = await get_extraction_summary(store, application_id)
-    if intent in {"transaction_lookup", "reconciliation", "guidance"}:
-        facts["transactions"] = await get_transaction_record(store, application_id, question)
+        pending["extraction_summary"] = get_extraction_summary(store, application_id)
+    if intent in {"transaction_lookup", "reconciliation", "alert_explanation"}:
+        pending["transactions"] = get_transaction_record(store, application_id, question)
     if intent in {"validation", "guidance"}:
-        facts["validation_findings"] = await get_validation_findings(store, application_id)
-    if intent in {"reconciliation", "alerts", "guidance"}:
-        facts["reconciliation"] = await get_reconciliation_summary(store, application_id)
-        facts["reconciliation_item"] = await get_reconciliation_item(
-            store, application_id, question
+        pending["validation_findings"] = get_validation_findings(store, application_id)
+    if intent in {"reconciliation", "alerts", "alert_explanation"}:
+        pending["reconciliation"] = get_reconciliation_summary(store, application_id)
+    elif intent == "guidance":
+        pending["reconciliation"] = get_reconciliation_overview(store, application_id)
+    if intent in {"alerts", "guidance", "alert_explanation"}:
+        pending["alerts"] = list_application_alerts(store, application_id)
+    if pending:
+        values = await asyncio.gather(*pending.values())
+        facts.update(dict(zip(pending, values, strict=True)))
+    if "reconciliation" in facts:
+        facts["reconciliation_item"] = find_reconciliation_item(
+            facts["reconciliation"], question
         )
-    if intent in {"alerts", "guidance"}:
-        facts["alerts"] = await list_application_alerts(store, application_id)
     if intent == "draft_reminder":
         facts["draft_reminder"] = draft_missing_document_reminder(
             collection,

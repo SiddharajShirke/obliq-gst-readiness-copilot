@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import time
 import uuid
 
 import pytest
@@ -382,3 +384,546 @@ async def test_uncited_model_answer_is_replaced_with_grounded_abstention() -> No
     assert "enough scoped evidence" in result["answer"]["answer"]
     assert result["answer"]["citations"] == []
     assert result["answer"]["confidence"] <= 0.25
+
+
+@pytest.mark.asyncio
+async def test_vague_alert_followup_uses_existing_explanation_without_model_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches vague alert follow-ups falling into the slow general-RAG path."""
+    from app.agents.rag_assistant import RAGAssistant
+
+    assistant = RAGAssistant(
+        get_store(), get_settings().model_copy(update={"ai_mode": "live"})
+    )
+    classified = await assistant.classify_question(
+        {"question": "What does this response mean?"}
+    )
+
+    async def fail_if_called(*args: object, **kwargs: object) -> dict[str, object]:
+        raise AssertionError("Existing alert evidence must not be sent to Groq")
+
+    monkeypatch.setattr(
+        "app.agents.rag_assistant.complete_groq_json",
+        fail_if_called,
+    )
+    state = {
+        "intent": classified["intent"],
+        "question": "What does this response mean?",
+        "application_data": {
+            "alerts": [
+                {
+                    "id": "591c79b9-11f5-4507-b1b8-83e537a9f918",
+                    "title": "Value Mismatch",
+                    "alert_type": "VALUE_MISMATCH",
+                    "status": "open",
+                    "evidence": {
+                        "books": {
+                            "invoice_number": "CG/0726/441",
+                            "itc_status": "Claim subject to conditions",
+                        },
+                        "gstr2b": {
+                            "invoice_number": "CG/0726/441",
+                            "itc_status": "Available",
+                        },
+                        "difference_fields": ["itc_status"],
+                    },
+                    "ai_explanation": {
+                        "what_happened": (
+                            "The ITC status differs between the books and GSTR-2B."
+                        ),
+                        "why_flagged": "The compared ITC status fields are not equal.",
+                        "what_ca_should_review": (
+                            "Review invoice CG/0726/441 before deciding the ITC treatment."
+                        ),
+                        "short_summary": "ITC status mismatch requires CA review.",
+                    },
+                }
+            ]
+        },
+    }
+
+    result = await assistant.generate_grounded_answer(state)
+
+    assert classified["intent"] == "alert_explanation"
+    assert "CG/0726/441" in result["draft_answer"]
+    assert "ITC status" in result["draft_answer"]
+    assert "CA review" in result["draft_answer"]
+    assert result["confidence"] >= 0.9
+
+
+@pytest.mark.asyncio
+async def test_live_guidance_timeout_returns_grounded_evidence_within_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches a slow Groq call consuming the assistant latency budget."""
+    from app.agents.rag_assistant import RAGAssistant
+
+    settings = get_settings().model_copy(
+        update={"ai_mode": "live", "rag_generation_timeout_seconds": 0.01}
+    )
+
+    async def slow_model(*args: object, **kwargs: object) -> dict[str, object]:
+        await asyncio.sleep(0.2)
+        return {"answer": "Late model answer", "confidence": 0.9}
+
+    monkeypatch.setattr("app.agents.rag_assistant.complete_groq_json", slow_model)
+    state = {
+        "intent": "guidance",
+        "question": "Explain the applicable review guidance",
+        "application_data": {},
+        "application_evidence": [],
+        "knowledge_evidence": [
+            {
+                "content": (
+                    "A reconciliation mismatch requires CA review of the source records."
+                )
+            }
+        ],
+        "history": [],
+    }
+    started = time.perf_counter()
+
+    result = await RAGAssistant(get_store(), settings).generate_grounded_answer(state)
+
+    assert time.perf_counter() - started < 0.1
+    assert "requires CA review" in result["draft_answer"]
+    assert "temporarily unavailable" not in result["draft_answer"]
+    assert result["confidence"] > 0
+
+
+@pytest.mark.asyncio
+async def test_live_guidance_failure_falls_back_to_structured_application_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches a provider failure degrading valid structured facts to a 0% answer."""
+    from app.agents.rag_assistant import RAGAssistant
+
+    async def failed_model(*args: object, **kwargs: object) -> dict[str, object]:
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr("app.agents.rag_assistant.complete_groq_json", failed_model)
+    settings = get_settings().model_copy(update={"ai_mode": "live"})
+    state = {
+        "intent": "guidance",
+        "question": "Explain the applicable review guidance",
+        "application_data": {
+            "application": {"period_label": "May 2026"},
+            "client": {"business_name": "Raj Traders"},
+            "collection": {
+                "required_count": 6,
+                "received_count": 6,
+                "missing_count": 0,
+                "progress_percent": 100,
+                "workflow_status": "documents_complete",
+            },
+            "extraction_summary": {
+                "categories": [{"record_count": 12, "needs_review": 3}]
+            },
+            "validation_findings": [{"id": "finding-1"}],
+            "reconciliation": {"summary": {"needs_review": 2}},
+            "alerts": [{"id": "alert-1"}],
+        },
+        "application_evidence": [],
+        "knowledge_evidence": [],
+        "history": [],
+    }
+
+    result = await RAGAssistant(get_store(), settings).generate_grounded_answer(state)
+
+    assert "Raj Traders" in result["draft_answer"]
+    assert "6/6" in result["draft_answer"]
+    assert "3 need CA review" in result["draft_answer"]
+    assert "1 raised alert" in result["draft_answer"]
+    assert result["confidence"] > 0
+
+
+@pytest.mark.asyncio
+async def test_live_guidance_without_text_evidence_uses_exact_facts_without_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches exact database facts being sent to a model with no retrieved text."""
+    from app.agents.rag_assistant import RAGAssistant
+
+    model_calls = 0
+
+    async def unexpected_model(*args: object, **kwargs: object) -> dict[str, object]:
+        nonlocal model_calls
+        model_calls += 1
+        return {"answer": "Unnecessary model answer", "confidence": 0.9}
+
+    monkeypatch.setattr("app.agents.rag_assistant.complete_groq_json", unexpected_model)
+    settings = get_settings().model_copy(update={"ai_mode": "live"})
+    state = {
+        "intent": "guidance",
+        "question": "Give the current application review snapshot",
+        "application_data": {
+            "application": {"period_label": "May 2026"},
+            "client": {"business_name": "Raj Traders"},
+            "collection": {
+                "required_count": 6,
+                "received_count": 6,
+                "progress_percent": 100,
+            },
+            "extraction_summary": {"categories": []},
+            "validation_findings": [],
+            "reconciliation": {"summary": {}},
+            "alerts": [],
+        },
+        "application_evidence": [],
+        "knowledge_evidence": [],
+        "history": [],
+    }
+
+    result = await RAGAssistant(get_store(), settings).generate_grounded_answer(state)
+
+    assert model_calls == 0
+    assert "Raj Traders" in result["draft_answer"]
+    assert "6/6" in result["draft_answer"]
+
+
+@pytest.mark.asyncio
+async def test_embedding_warmup_loads_and_encodes_before_serving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches the local embedding model remaining cold until the first RAG request."""
+    from app.services.rag.embeddings import warm_embedding_provider
+
+    encoded: list[list[str]] = []
+
+    class FakeProvider:
+        dimension = 384
+
+        def embed_texts(self, texts: list[str]) -> list[list[float]]:
+            encoded.append(texts)
+            return [[0.0] * self.dimension for _ in texts]
+
+    monkeypatch.setattr(
+        "app.services.rag.embeddings.get_embedding_provider",
+        lambda settings: FakeProvider(),
+    )
+
+    await warm_embedding_provider(get_settings())
+
+    assert encoded == [["OBLIQ embedding warmup"]]
+
+
+@pytest.mark.asyncio
+async def test_question_retrieval_does_not_rescan_and_reindex_application(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches per-question document rescans that create N+1 Supabase latency."""
+    from app.agents.rag_assistant import RAGAssistant
+
+    async def fail_if_rescanned(*args: object, **kwargs: object) -> int:
+        raise AssertionError("Document indexing belongs to extraction review, not a question")
+
+    async def scoped_results(*args: object, **kwargs: object) -> list[dict[str, object]]:
+        return [{"content": "Approved application evidence"}]
+
+    monkeypatch.setattr(
+        "app.services.rag.document_indexing.sync_application_documents",
+        fail_if_rescanned,
+    )
+    monkeypatch.setattr(
+        "app.agents.rag_assistant.retrieve_application_documents",
+        scoped_results,
+    )
+
+    result = await RAGAssistant(
+        get_store(), get_settings()
+    ).retrieve_application_evidence(
+        {
+            "intent": "guidance",
+            "question": "Explain the review guidance",
+            "firm_id": DEMO_FIRM_ID,
+            "application_id": RAJ_APPLICATION_ID,
+        }
+    )
+
+    assert result == {"application_evidence": [{"content": "Approved application evidence"}]}
+
+
+@pytest.mark.asyncio
+async def test_guidance_structured_fact_reads_run_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches independent Supabase fact reads becoming a sequential latency chain."""
+    from app.services.rag.application_context import load_structured_facts
+
+    class FakeStore:
+        async def get_row(self, table: str, row_id: str) -> dict[str, object]:
+            if table == "applications":
+                return {
+                    "id": row_id,
+                    "client_id": "client-1",
+                    "period_label": "May 2026",
+                }
+            return {"id": row_id, "business_name": "Raj Traders"}
+
+    async def delayed(value: object) -> object:
+        await asyncio.sleep(0.08)
+        return value
+
+    monkeypatch.setattr(
+        "app.services.rag.application_context.get_document_collection_status",
+        lambda *args, **kwargs: delayed({"requirements": []}),
+    )
+    monkeypatch.setattr(
+        "app.services.rag.application_context.get_extraction_summary",
+        lambda *args, **kwargs: delayed({"categories": []}),
+    )
+    monkeypatch.setattr(
+        "app.services.rag.application_context.get_transaction_record",
+        lambda *args, **kwargs: delayed([]),
+    )
+    monkeypatch.setattr(
+        "app.services.rag.application_context.get_validation_findings",
+        lambda *args, **kwargs: delayed([]),
+    )
+    monkeypatch.setattr(
+        "app.services.rag.application_context.get_reconciliation_overview",
+        lambda *args, **kwargs: delayed({"summary": {}}),
+    )
+    monkeypatch.setattr(
+        "app.services.rag.application_context.list_application_alerts",
+        lambda *args, **kwargs: delayed([]),
+    )
+    started = time.perf_counter()
+
+    result = await load_structured_facts(
+        FakeStore(),
+        application_id=RAJ_APPLICATION_ID,
+        question="Explain the applicable review guidance",
+        intent="guidance",
+    )
+
+    assert time.perf_counter() - started < 0.2
+    assert result["alerts"] == []
+
+
+@pytest.mark.asyncio
+async def test_guidance_avoids_full_transaction_and_reconciliation_item_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches overview guidance loading every invoice and reconciliation item."""
+    from app.services.rag.application_context import load_structured_facts
+
+    requested_tables: list[str] = []
+
+    class FakeStore:
+        async def get_row(self, table: str, row_id: str) -> dict[str, object]:
+            if table == "applications":
+                return {
+                    "id": row_id,
+                    "client_id": "client-1",
+                    "period_label": "May 2026",
+                }
+            return {"id": row_id, "business_name": "Raj Traders"}
+
+        async def list_rows(
+            self, table: str, *args: object, **kwargs: object
+        ) -> list[dict[str, object]]:
+            requested_tables.append(table)
+            if table == "reconciliation_runs":
+                return [{"id": "run-1", "summary": {"exact_match": 1}}]
+            return []
+
+    monkeypatch.setattr(
+        "app.services.rag.application_context.get_document_collection_status",
+        lambda *args, **kwargs: asyncio.sleep(0, result={"requirements": []}),
+    )
+
+    result = await load_structured_facts(
+        FakeStore(),  # type: ignore[arg-type]
+        application_id=RAJ_APPLICATION_ID,
+        question="Explain the applicable review guidance",
+        intent="guidance",
+    )
+
+    assert "transactions" not in result
+    assert "reconciliation_items" not in requested_tables
+
+
+@pytest.mark.asyncio
+async def test_structured_facts_reuse_access_checked_application_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches the same application row being fetched again after access validation."""
+    from app.services.rag.application_context import load_structured_facts
+
+    class FakeStore:
+        async def get_row(self, table: str, row_id: str) -> dict[str, object]:
+            if table == "applications":
+                raise AssertionError("Application was already loaded during access validation")
+            return {"id": row_id, "business_name": "Raj Traders"}
+
+        async def list_rows(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+            return []
+
+    monkeypatch.setattr(
+        "app.services.rag.application_context.get_document_collection_status",
+        lambda *args, **kwargs: asyncio.sleep(0, result={"requirements": []}),
+    )
+    application = {
+        "id": RAJ_APPLICATION_ID,
+        "client_id": "client-1",
+        "period_label": "May 2026",
+    }
+
+    result = await load_structured_facts(
+        FakeStore(),  # type: ignore[arg-type]
+        application_id=RAJ_APPLICATION_ID,
+        question="Which documents are missing?",
+        intent="missing_documents",
+        application=application,
+    )
+
+    assert result["application"]["id"] == RAJ_APPLICATION_ID
+
+
+@pytest.mark.asyncio
+async def test_complete_collection_does_not_load_request_history() -> None:
+    """Catches completed checklists paying for application/reminder reads they do not use."""
+    from app.services.document_collection import get_document_collection_status
+
+    class FakeStore:
+        async def list_rows(
+            self, table: str, *args: object, **kwargs: object
+        ) -> list[dict[str, object]]:
+            if table == "document_requirements":
+                return [
+                    {
+                        "id": "requirement-1",
+                        "label": "Sales Register",
+                        "requirement_type": "sales_register",
+                        "required": True,
+                        "status": "received",
+                    }
+                ]
+            raise AssertionError(f"Unexpected completed-collection read: {table}")
+
+        async def get_row(self, table: str, row_id: str) -> dict[str, object]:
+            raise AssertionError(f"Unexpected completed-collection read: {table}")
+
+    result = await get_document_collection_status(
+        FakeStore(),  # type: ignore[arg-type]
+        RAJ_APPLICATION_ID,
+    )
+
+    assert result["workflow_status"] == "documents_complete"
+
+
+@pytest.mark.asyncio
+async def test_rag_generation_uses_fast_model_not_heavy_extraction_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches short assistant prose being routed to the heavy extraction model."""
+    from app.agents.rag_assistant import RAGAssistant
+
+    observed_model: list[str | None] = []
+    observed_max_tokens: list[int | None] = []
+
+    async def complete(*args: object, **kwargs: object) -> dict[str, object]:
+        observed_model.append(kwargs.get("model"))
+        observed_max_tokens.append(kwargs.get("max_tokens"))
+        return {"answer": "Grounded guidance", "confidence": 0.9}
+
+    monkeypatch.setattr("app.agents.rag_assistant.complete_groq_json", complete)
+    settings = get_settings().model_copy(
+        update={
+            "ai_mode": "live",
+            "groq_model": "stale-default-model",
+            "groq_heavy_model": "heavy-extraction-model",
+            "groq_rag_model": "fast-rag-model",
+            "rag_max_output_tokens": 420,
+        }
+    )
+
+    await RAGAssistant(get_store(), settings).generate_grounded_answer(
+        {
+            "intent": "guidance",
+            "question": "Explain the review guidance",
+            "application_data": {},
+            "application_evidence": [],
+            "knowledge_evidence": [{"content": "Grounded source"}],
+            "history": [],
+        }
+    )
+
+    assert observed_model == ["fast-rag-model"]
+    assert observed_max_tokens == [420]
+
+
+def test_rag_model_falls_back_to_known_working_heavy_model() -> None:
+    settings = get_settings().model_copy(
+        update={
+            "groq_model": "stale-default-model",
+            "groq_heavy_model": "known-working-model",
+            "groq_rag_model": "",
+        }
+    )
+
+    assert settings.effective_groq_rag_model == "known-working-model"
+
+
+def test_assistant_model_output_normalizes_provider_confidence_label() -> None:
+    from app.schemas.rag import AssistantModelOutput
+
+    output = AssistantModelOutput.model_validate(
+        {"answer": "Grounded review guidance", "confidence": "medium"}
+    )
+
+    assert output.answer == "Grounded review guidance"
+    assert output.confidence == 0.7
+
+
+@pytest.mark.asyncio
+async def test_query_persists_conversation_without_reloading_application_sequentially() -> None:
+    """Catches redundant application reads and sequential message inserts on the hot path."""
+    from app.agents.rag_assistant import RAGAssistant
+
+    inserted: list[dict[str, object]] = []
+
+    class FakeStore:
+        async def list_rows(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+            return []
+
+        async def get_row(self, *args: object, **kwargs: object) -> dict[str, object]:
+            raise AssertionError("The graph result already contains the application scope")
+
+        async def insert_row(self, table: str, row: dict[str, object]) -> dict[str, object]:
+            await asyncio.sleep(0.08)
+            inserted.append(row)
+            return row
+
+    class FakeGraph:
+        async def ainvoke(self, state: dict[str, object]) -> dict[str, object]:
+            return {
+                "application_data": {
+                    "application": {"demo_session_id": "demo-session-1"}
+                },
+                "answer": {
+                    "answer": "Grounded response",
+                    "citations": [],
+                    "source_types": ["application"],
+                },
+            }
+
+    assistant = RAGAssistant(FakeStore(), get_settings())  # type: ignore[arg-type]
+    assistant.graph = FakeGraph()
+    started = time.perf_counter()
+
+    answer = await assistant.query(
+        question="Explain this alert",
+        firm_id=DEMO_FIRM_ID,
+        application_id=RAJ_APPLICATION_ID,
+        user_id="user-1",
+        conversation_id="conversation-1",
+        source_type=None,
+    )
+
+    assert time.perf_counter() - started < 0.14
+    assert answer["answer"] == "Grounded response"
+    assert [row["role"] for row in inserted] == ["user", "assistant"]
+    assert {row["demo_session_id"] for row in inserted} == {"demo-session-1"}

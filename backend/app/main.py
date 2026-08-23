@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,10 +10,27 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.config import get_settings
 from app.middleware import UnhandledExceptionBoundaryMiddleware, UploadTokenRedactionFilter
+from app.services.rag.embeddings import warm_embedding_provider
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level)
 logging.getLogger("uvicorn.access").addFilter(UploadTokenRedactionFilter())
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    if settings.ai_mode == "live" and settings.embedding_provider != "mock":
+        started = time.perf_counter()
+        try:
+            await warm_embedding_provider(settings)
+            logging.getLogger(__name__).info(
+                "RAG embedding provider warmed in %.2fs", time.perf_counter() - started
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).error(
+                "RAG embedding warmup failed: %s", type(exc).__name__
+            )
+    yield
 
 app = FastAPI(
     title=settings.app_name,
@@ -20,6 +39,7 @@ app = FastAPI(
         "Prototype API for GST document collection, extraction, validation, "
         "GSTR-2B reconciliation, RAG assistance and WhatsApp workflows."
     ),
+    lifespan=lifespan,
 )
 # Add the exception boundary first so CORS is the outer user middleware and
 # therefore decorates sanitized 500 responses as well as successful responses.

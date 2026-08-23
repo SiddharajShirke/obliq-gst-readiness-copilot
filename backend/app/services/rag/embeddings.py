@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import math
 import re
@@ -68,9 +69,19 @@ def _cached_provider(mode: str, model_name: str, dimension: int) -> EmbeddingPro
 
 
 def get_embedding_provider(settings: Settings) -> EmbeddingProvider:
-    mode = "deterministic" if settings.ai_mode == "mock" or settings.embedding_provider == "mock" else "local"
+    mode = (
+        "deterministic"
+        if settings.ai_mode == "mock" or settings.embedding_provider == "mock"
+        else "local"
+    )
     return _cached_provider(mode, settings.embedding_model, settings.embedding_dimension)
 
 
 def embed_texts(texts: list[str], settings: Settings) -> list[list[float]]:
     return get_embedding_provider(settings).embed_texts(texts)
+
+
+async def warm_embedding_provider(settings: Settings) -> None:
+    """Load and exercise the configured embedder before requests are accepted."""
+    provider = await asyncio.to_thread(get_embedding_provider, settings)
+    await asyncio.to_thread(provider.embed_texts, ["OBLIQ embedding warmup"])

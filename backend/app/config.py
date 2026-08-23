@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
     groq_heavy_model: str = ""
+    groq_rag_model: str = ""
     nvidia_api_key: str = ""
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_small_model: str = ""
@@ -67,6 +68,8 @@ class Settings(BaseSettings):
     rag_min_similarity: float = 0.45
     rag_chunk_size: int = 900
     rag_chunk_overlap: int = 140
+    rag_generation_timeout_seconds: float = 1.5
+    rag_max_output_tokens: int = 800
 
     ocr_enabled: bool = True
     tesseract_cmd: str = ""
@@ -154,6 +157,10 @@ class Settings(BaseSettings):
     @property
     def effective_groq_model(self) -> str:
         return self.groq_heavy_model or self.groq_model
+
+    @property
+    def effective_groq_rag_model(self) -> str:
+        return self.groq_rag_model or self.effective_groq_model
 
     @property
     def allowed_extensions(self) -> set[str]:

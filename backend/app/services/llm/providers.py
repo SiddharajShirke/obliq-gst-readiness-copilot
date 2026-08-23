@@ -174,7 +174,12 @@ def _json_from_text(text: str) -> dict[str, Any]:
 
 
 async def complete_groq_json(
-    settings: Settings, *, system_prompt: str, user_prompt: str
+    settings: Settings,
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    model: str | None = None,
+    max_tokens: int | None = None,
 ) -> dict[str, Any]:
     """Call the Phase 3 heavy provider directly, independent of legacy settings."""
     if not settings.groq_api_key:
@@ -182,7 +187,7 @@ async def complete_groq_json(
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {settings.groq_api_key}"}
     payload = {
-        "model": settings.effective_groq_model,
+        "model": model or settings.effective_groq_model,
         "temperature": 0,
         "response_format": {"type": "json_object"},
         "messages": [
@@ -190,6 +195,8 @@ async def complete_groq_json(
             {"role": "user", "content": user_prompt},
         ],
     }
+    if max_tokens is not None:
+        payload["max_completion_tokens"] = max_tokens
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(url, headers=headers, json=payload)
         response.raise_for_status()
