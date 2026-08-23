@@ -19,6 +19,7 @@ from app.schemas.documents import NormalizedGSTRecord
 from app.services.document_processing.classifier import classify_document
 from app.services.document_processing.parsers import (
     extract_invoice_from_text,
+    parse_normalized_pdf_tables,
     parse_normalized_table,
     read_docx_text,
     read_image_text,
@@ -28,6 +29,7 @@ from app.services.document_processing.parsers import (
 from app.services.document_processing.routing import choose_extraction_route
 from app.services.document_processing.taxonomy import ALL_DOCUMENT_TYPES
 from app.services.llm.providers import complete_groq_json, complete_nvidia_json
+from app.services.resource_control import heavy_processing_gate
 from app.services.validation import (
     InvoiceInput,
     detect_duplicate_groups,
@@ -61,7 +63,14 @@ class DocumentProcessor:
 
     async def process(self, document_id: str) -> dict[str, Any]:
         try:
-            result = await self.graph.ainvoke({"document_id": document_id, "status": "started"})
+            await self.store.update_row(
+                "documents", document_id, {"processing_status": "queued"}
+            )
+            gate = heavy_processing_gate(self.settings.heavy_processing_concurrency)
+            async with gate.slot():
+                result = await self.graph.ainvoke(
+                    {"document_id": document_id, "status": "started"}
+                )
             await self.store.update_row("documents", document_id, {"processing_error": None})
             return result
         except Exception as exc:
@@ -171,24 +180,53 @@ class DocumentProcessor:
                     raw_text = read_docx_text(state["content"])
                 else:
                     raw_text = state["content"].decode("utf-8", errors="ignore")
-                deterministic = extract_invoice_from_text(raw_text, document_type)
-                structured = {
-                    "rows": [
-                        self._normalized_from_legacy(
-                            deterministic,
-                            document_id=document["id"],
+                parsed_pdf = None
+                if extension == ".pdf" and raw_text.strip():
+                    try:
+                        parsed_pdf = parse_normalized_pdf_tables(
+                            state["content"],
                             document_type=document_type,
+                            source_document_id=document["id"],
                             tax_period=tax_period,
-                        ).model_dump(mode="json")
-                    ]
-                }
-                provider, model_name, task_type, fallback_reason = (
-                    "deterministic",
-                    "pymupdf-python-docx-tesseract",
-                    "text_parse",
-                    None,
-                )
-                if self.settings.ai_mode == "live":
+                        )
+                    except Exception:
+                        # Layout detection is an optimization. Unusual but valid
+                        # PDFs continue through text/AI extraction instead of failing.
+                        parsed_pdf = None
+                if parsed_pdf is not None:
+                    structured = {
+                        "summary": parsed_pdf.summary,
+                        "rows": [
+                            record.model_dump(mode="json") for record in parsed_pdf.records
+                        ],
+                        "column_mapping": parsed_pdf.column_mapping,
+                    }
+                    provider, model_name, task_type, fallback_reason = (
+                        "deterministic",
+                        "pymupdf-table",
+                        "pdf_table_parse",
+                        None,
+                    )
+                else:
+                    deterministic = extract_invoice_from_text(raw_text, document_type)
+                    structured = {
+                        "rows": [
+                            self._normalized_from_legacy(
+                                deterministic,
+                                document_id=document["id"],
+                                document_type=document_type,
+                                tax_period=tax_period,
+                            ).model_dump(mode="json")
+                        ]
+                    }
+                    provider, model_name, task_type, fallback_reason = (
+                        "deterministic",
+                        "pymupdf-python-docx-tesseract",
+                        "text_parse",
+                        None,
+                    )
+                    deterministic_structured = copy.deepcopy(structured)
+                if self.settings.ai_mode == "live" and parsed_pdf is None:
                     route = choose_extraction_route(
                         document_type,
                         extension,
@@ -242,7 +280,32 @@ class DocumentProcessor:
                                 ),
                             )
                         except Exception as exc:
-                            fallback_reason = type(exc).__name__
+                            nvidia_failure = type(exc).__name__
+                            try:
+                                structured = await complete_groq_json(
+                                    self.settings,
+                                    system_prompt=NORMALIZED_GST_EXTRACTION_SYSTEM_PROMPT,
+                                    user_prompt=prompt,
+                                )
+                                provider, model_name, task_type, fallback_reason = (
+                                    "groq",
+                                    self.settings.effective_groq_model,
+                                    "complex_structured_extraction",
+                                    nvidia_failure,
+                                )
+                            except Exception as fallback_exc:
+                                structured = deterministic_structured
+                                provider, model_name, task_type, fallback_reason = (
+                                    "deterministic",
+                                    "pymupdf-python-docx-tesseract",
+                                    "text_parse_ai_unavailable",
+                                    (
+                                        f"nvidia_{nvidia_failure};"
+                                        f"groq_{type(fallback_exc).__name__}"
+                                    ),
+                                )
+                    elif route == "groq":
+                        try:
                             structured = await complete_groq_json(
                                 self.settings,
                                 system_prompt=NORMALIZED_GST_EXTRACTION_SYSTEM_PROMPT,
@@ -253,17 +316,14 @@ class DocumentProcessor:
                                 self.settings.effective_groq_model,
                                 "complex_structured_extraction",
                             )
-                    elif route == "groq":
-                        structured = await complete_groq_json(
-                            self.settings,
-                            system_prompt=NORMALIZED_GST_EXTRACTION_SYSTEM_PROMPT,
-                            user_prompt=prompt,
-                        )
-                        provider, model_name, task_type = (
-                            "groq",
-                            self.settings.effective_groq_model,
-                            "complex_structured_extraction",
-                        )
+                        except Exception as exc:
+                            structured = deterministic_structured
+                            provider, model_name, task_type, fallback_reason = (
+                                "deterministic",
+                                "pymupdf-python-docx-tesseract",
+                                "text_parse_ai_unavailable",
+                                f"groq_{type(exc).__name__}",
+                            )
 
         original_structured_data = copy.deepcopy(structured)
         raw_rows = structured.get("rows", [])
@@ -308,7 +368,10 @@ class DocumentProcessor:
             NormalizedGSTRecord.model_validate(
                 {
                     **source,
-                    "document_type": source.get("document_type") or document_type,
+                    # The document was already classified deterministically before AI
+                    # extraction. Model output may map fields, but it cannot replace
+                    # the canonical checklist/reconciliation taxonomy or provenance.
+                    "document_type": document_type,
                     "source_document_id": document_id,
                 }
             ).model_dump(mode="json")

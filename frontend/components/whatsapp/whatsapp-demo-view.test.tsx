@@ -62,6 +62,8 @@ describe("live WhatsApp demo view", () => {
     expect(html).toContain("Sales Register");
     expect(html).toContain("Uploaded");
     expect(html).toContain("Awaiting Processing");
+    expect(html.match(/data-qr-scan-surface="true"/g) ?? []).toHaveLength(2);
+    expect(html.match(/fill="#0F172A"/g) ?? []).toHaveLength(2);
     expect(html).not.toContain("Reply as the client");
     expect(html).not.toContain("not-rendered");
     expect(html).not.toContain("Twilio");

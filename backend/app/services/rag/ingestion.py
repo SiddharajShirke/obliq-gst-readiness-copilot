@@ -9,7 +9,7 @@ from typing import Any
 from app.config import Settings
 from app.repositories.base import DataStore
 from app.services.rag.chunking import chunk_document
-from app.services.rag.embeddings import embed_texts
+from app.services.rag.embeddings import embed_texts_async
 from app.services.rag.extractors import extract_knowledge_bytes
 
 
@@ -62,7 +62,9 @@ async def ingest_text(
         max_chars=settings.rag_chunk_size,
         overlap_chars=settings.rag_chunk_overlap,
     )
-    embeddings = embed_texts([chunk.content for chunk in chunks], settings)
+    embeddings = await embed_texts_async(
+        [chunk.content for chunk in chunks], settings
+    )
     for chunk, embedding in zip(chunks, embeddings, strict=True):
         metadata = {
             "title": title,

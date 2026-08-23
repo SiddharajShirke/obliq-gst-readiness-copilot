@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     rag_chunk_overlap: int = 140
     rag_generation_timeout_seconds: float = 1.5
     rag_max_output_tokens: int = 800
+    heavy_processing_concurrency: int = Field(default=1, ge=1, le=4)
 
     ocr_enabled: bool = True
     tesseract_cmd: str = ""

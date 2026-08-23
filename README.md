@@ -8,20 +8,27 @@ GST Co-Pilot is the OBLIQ hiring prototype: one deeply implemented workflow for 
 
 > **Professional responsibility:** GST Co-Pilot assists with preparation, review, and reconciliation. Final GST filing, ITC treatment, and professional compliance decisions remain with the assigned CA.
 
+## Important Deployment Notice
+
+> [!WARNING]
+> **THE HOSTED BACKEND RUNS ON A MEMORY-CONSTRAINED FREE TIER.** GST Co-Pilot performs document parsing, OCR, AI extraction, embeddings, RAG, reconciliation, and report generation. These backend-heavy operations can be slower on the hosted demo, and the free instance may cold-start or reach its memory limit during heavy workloads. The processing pipeline serializes heavy work to reduce memory spikes, but local execution remains the most reliable way to test the complete workflow.
+
+### Recommended test setup
+
+- Use the three synthetic packages in [`GST_Co-Pilot_test_Data/`](GST_Co-Pilot_test_Data/) for local or hosted application testing.
+- For easy local testing, download the privately shared [Environment Setup File](https://drive.google.com/file/d/1x0dr2MX8kaEDBSUb9Xm7-ifQDXe_qfSc/view?usp=sharing), place it as the repository's `.env`, and keep it out of Git.
+- The environment file contains sensitive credentials. Access should remain restricted to authorized reviewers and must never be committed or shared publicly.
+- Safe variable names and placeholders are available in [`.env.example`](.env.example).
+
 ## Live Application
 
 [Open GST Co-Pilot](https://obliq-gst-readiness-copilot.vercel.app/)
 
-The placeholder above should be replaced with the final Vercel production URL. The API is deployed separately on Render.
+The production frontend runs on Vercel. The API is deployed separately on Render.
 
 ## Environment Configuration
 
-- [Environment Setup File](.env file :  https://drive.google.com/file/d/1x0dr2MX8kaEDBSUb9Xm7-ifQDXe_qfSc/view?usp=sharing) 
- ### for easy local Testing download the .env file from this Drive Link ##
-
- ### Use Datset from the folder : GST_Co-Pilot_test_Data for Application testing ( local/ live)
-
-
+- [Private environment setup file](https://drive.google.com/file/d/1x0dr2MX8kaEDBSUb9Xm7-ifQDXe_qfSc/view?usp=sharing) — download for authorized local testing only.
 - [Repository environment template](.env.example) — contains variable names and safe placeholders only.
 - [Frontend environment template](frontend/.env.local.example) — contains browser-safe variables only.
 - Repository: [GST Co-Pilot source](<REPOSITORY_URL>)
@@ -236,61 +243,24 @@ Important behavior:
 
 ```mermaid
 flowchart LR
-    subgraph People[Users]
-        CA[CA / Reviewer]
-        Client[Client or Judge]
-    end
+    Users[CA, Client, Judge]
+    Frontend[Vercel<br/>Next.js Web App]
+    Backend[Render<br/>FastAPI API]
+    Supabase[Supabase<br/>Auth · PostgreSQL · Storage · pgvector]
 
-    subgraph Frontend[Vercel - Next.js 16]
-        Web[Landing, Auth, Dashboard]
-        Workspace[GST Application Workspace]
-        UploadUI[Secure Upload Portal]
-        Drawer[Ask OBLIQ Drawer]
-    end
+    Users --> Frontend
+    Frontend --> Backend
+    Frontend -->|Sign-in session| Supabase
+    Backend -->|Business data, files, vectors| Supabase
 
-    subgraph Backend[Render - FastAPI Docker Service]
-        API[REST API and Access Guards]
-        Docs[Document Collection and Processing]
-        Review[Validation, Reconciliation, Alerts]
-        RAG[LangGraph RAG Assistant]
-        Reports[Report Generation]
-        Audit[Audit Service]
-    end
+    Backend --> Vonage[Vonage<br/>WhatsApp Sandbox]
+    Backend --> NVIDIA[NVIDIA<br/>Routine AI / Vision]
+    Backend --> Groq[Groq<br/>Complex AI / RAG]
 
-    subgraph Supabase[Hosted Supabase]
-        Auth[Auth]
-        DB[(PostgreSQL)]
-        Storage[(Private Storage)]
-        Vector[(pgvector + FTS)]
-    end
-
-    subgraph Providers[External Providers]
-        Vonage[Vonage Messages API Sandbox]
-        NVIDIA[NVIDIA Hosted API / NIM]
-        Groq[Groq API]
-    end
-
-    CA --> Web
-    CA --> Workspace
-    Client --> UploadUI
-    Web --> Auth
-    Web --> API
-    Workspace --> API
-    UploadUI --> API
-    Drawer --> RAG
-    API --> DB
-    API --> Storage
-    API --> Vonage
-    Docs --> NVIDIA
-    Docs --> Groq
-    Review --> NVIDIA
-    Review --> Groq
-    RAG --> Groq
-    RAG --> Vector
-    RAG --> DB
-    Reports --> DB
-    Reports --> Storage
-    Audit --> DB
+    classDef primary fill:#dbeafe,stroke:#2563eb,color:#0f172a,stroke-width:2px;
+    classDef service fill:#f8fafc,stroke:#64748b,color:#0f172a;
+    class Frontend,Backend,Supabase primary;
+    class Users,Vonage,NVIDIA,Groq service;
 ```
 
 ### Architecture layers
@@ -307,106 +277,118 @@ flowchart LR
 The architecture diagram shows the systems. This diagram shows how a request moves through internal services.
 
 ```mermaid
-flowchart TB
-    UI[Next.js UI] --> AuthGuard[FastAPI Auth and Firm/Application Guard]
-    PublicUpload[Public Upload Token Route] --> TokenGuard[Secure Upload Context Resolver]
+flowchart TD
+    Request[Authenticated workspace<br/>or secure upload link]
+    Guard[Access or token guard]
+    Intake[Unified document intake]
+    Store[Private Storage + metadata]
+    Process[Deterministic parser<br/>OCR / NVIDIA / Groq when required]
+    Review[CA extraction review]
+    Validate[Deterministic validation]
+    Ready[Ready for Filing + Export Pack]
+    Reconcile[GSTR-2B reconciliation]
+    Alerts[CA-raised alerts + AI explanation]
+    RAG[Application-scoped LangGraph RAG]
+    Audit[Audit Trail]
 
-    AuthGuard --> APIs
-    TokenGuard --> Intake
+    Request --> Guard --> Intake --> Store --> Process --> Review --> Validate
+    Validate --> Ready
+    Validate --> Reconcile --> Alerts
+    Store -. approved evidence .-> RAG
+    Validate -. structured facts .-> RAG
+    Reconcile -. exact findings .-> RAG
+    Alerts -. raised alerts .-> RAG
+    Guard -. meaningful actions .-> Audit
+    Process -. lifecycle .-> Audit
+    Review -. decisions .-> Audit
+    Ready -. exports .-> Audit
 
-    subgraph APIs[FastAPI Domain APIs]
-        Clients[Clients and Applications]
-        Messaging[Requests, Reminders, Vonage Sessions]
-        Documents[Documents and Extraction Review]
-        Compliance[Validation, Reconciliation, Alerts]
-        Assistant[Assistant and Action Proposals]
-        ExportAPI[Readiness and Exports]
-    end
-
-    subgraph Services[Application Services]
-        Intake[Unified Document Intake]
-        Processing[Controlled Document LangGraph]
-        Validator[Deterministic Validation]
-        Matcher[Option A Reconciliation]
-        AlertAI[Read-only Alert Explanation]
-        RagGraph[Application-scoped RAG LangGraph]
-        ReportService[ReportLab and CSV/ZIP Reports]
-        AuditService[Audit Recording]
-    end
-
-    Documents --> Intake
-    Intake --> Processing
-    Processing --> Validator
-    Compliance --> Validator
-    Compliance --> Matcher
-    Compliance --> AlertAI
-    Assistant --> RagGraph
-    ExportAPI --> ReportService
-    Messaging --> Vonage[Vonage API]
-    Processing --> AI[NVIDIA / Groq]
-    AlertAI --> AI
-    RagGraph --> Groq[Groq Grounded Generation]
-
-    Services --> Repository[DataStore Repository Interface]
-    APIs --> Repository
-    Repository --> Postgres[(Supabase PostgreSQL)]
-    Repository --> Storage[(Supabase Private Storage)]
-    RagGraph --> Vector[(pgvector RPCs and Knowledge FTS)]
-    AuditService --> Postgres
+    classDef action fill:#eff6ff,stroke:#3b82f6,color:#0f172a;
+    classDef review fill:#fef3c7,stroke:#d97706,color:#451a03;
+    classDef output fill:#dcfce7,stroke:#16a34a,color:#052e16;
+    class Review,Validate,Reconcile review;
+    class Ready,Alerts,RAG,Audit output;
+    class Request,Guard,Intake,Store,Process action;
 ```
 
 The `DataStore` abstraction has Supabase and in-memory implementations. The in-memory store exists for tests and explicit local demo mode; deployed mode is required to use Supabase.
 
 ## Database Schema
 
-The schema is defined by forward migrations in [`supabase/migrations/`](supabase/migrations/). The diagram below includes every persistent application table that is central to the current runtime.
+The schema is defined by forward migrations in [`supabase/migrations/`](supabase/migrations/). Instead of one crowded ER diagram, the schema is shown as a domain map followed by four focused relationship diagrams. The table catalog below remains the complete readable reference.
+
+```mermaid
+flowchart LR
+    Identity[Identity and Firm]
+    Work[Clients and GST Applications]
+    Documents[Documents and Extraction]
+    Compliance[Validation, Reconciliation and Alerts]
+    Messaging[WhatsApp and Guided Demo]
+    Knowledge[RAG and Knowledge]
+    Trace[Workflow and Audit]
+
+    Identity --> Work --> Documents --> Compliance
+    Work --> Messaging
+    Documents --> Knowledge
+    Compliance --> Knowledge
+    Work --> Trace
+    Compliance --> Trace
+
+    classDef domain fill:#f8fafc,stroke:#475569,color:#0f172a,stroke-width:1.5px;
+    class Identity,Work,Documents,Compliance,Messaging,Knowledge,Trace domain;
+```
+
+### Identity and application ownership
 
 ```mermaid
 erDiagram
-    AUTH_USERS ||--|| profiles : owns
+    AUTH_USERS ||--|| profiles : has
     AUTH_USERS ||--o{ firm_members : joins
-    firms ||--o{ firm_members : has
+    firms ||--o{ firm_members : contains
     firms ||--o{ clients : owns
-    clients ||--o{ applications : has_periods
+    clients ||--o{ applications : has
+    applications ||--o{ document_requirements : tracks
+    applications ||--o{ workflow_runs : records
+```
 
-    applications ||--o{ document_requirements : requires
+### Documents, extraction, and validation
+
+```mermaid
+erDiagram
     applications ||--o{ upload_links : authorizes
-    clients ||--o{ upload_links : receives
+    applications ||--o{ document_submission_batches : submits
     applications ||--o{ documents : contains
     document_requirements ||--o{ documents : classifies
-    upload_links ||--o{ documents : uploads
+    document_submission_batches ||--o{ documents : groups
     documents ||--o| document_extractions : produces
     documents ||--o{ invoice_records : normalizes
-    applications ||--o{ invoice_records : contains
-    applications ||--o{ validation_findings : has
     invoice_records ||--o{ validation_findings : triggers
+    applications ||--o{ validation_correction_proposals : proposes
+```
 
+### Reconciliation, alerts, and communications
+
+```mermaid
+erDiagram
     applications ||--o{ reconciliation_runs : runs
-    documents ||--o{ reconciliation_runs : supplies_gstr2b
     reconciliation_runs ||--o{ reconciliation_items : produces
-    invoice_records ||--o{ reconciliation_items : books_or_gstr2b
+    invoice_records ||--o{ reconciliation_items : compares
     reconciliation_items ||--o| alerts : may_raise
     validation_findings ||--o| alerts : may_raise
-    applications ||--o{ alerts : contains
-
-    applications ||--o{ reminders : has
-    applications ||--o{ whatsapp_messages : records
-    firms ||--o{ integration_settings : configures
-    applications ||--o{ workflow_runs : tracks
-    applications ||--o{ audit_events : audits
-
+    applications ||--o{ reminders : sends
     whatsapp_demo_sessions ||--o{ whatsapp_messages : scopes
     whatsapp_demo_sessions ||--o{ upload_links : scopes
     whatsapp_demo_sessions ||--o{ documents : scopes
-    whatsapp_demo_sessions ||--o| applications : clones
     whatsapp_demo_sessions ||--|| guided_demo_runs : powers
+    applications ||--o{ audit_events : audits
+```
 
-    document_submission_batches ||--o{ documents : groups
-    applications ||--o{ document_submission_batches : submits
-    applications ||--o{ validation_correction_proposals : proposes
+### RAG and knowledge
 
-    knowledge_sources ||--o{ knowledge_chunks : chunks
-    documents ||--o{ document_chunks : chunks
+```mermaid
+erDiagram
+    knowledge_sources ||--o{ knowledge_chunks : contains
+    documents ||--o{ document_chunks : contains
     applications ||--o{ document_chunks : scopes
     applications ||--o{ assistant_messages : remembers
     applications ||--o{ assistant_action_proposals : proposes
@@ -678,6 +660,20 @@ An ambiguous file is never silently forced into Purchase Invoices. NVIDIA and Gr
 | Scanned PDF | PyMuPDF page rendering + Tesseract | Sometimes after OCR |
 
 Clean spreadsheet registers are not sent to an LLM merely because one is configured.
+
+### Free-tier resource control and measured pipeline time
+
+Heavy document work and local embedding generation share one bounded processing gate. The deployed default is `HEAVY_PROCESSING_CONCURRENCY=1`, with one Uvicorn worker and one OpenMP/MKL thread. Upload requests can therefore store files and return promptly while heavy work proceeds sequentially instead of loading several OCR/AI/RAG operations into memory at once.
+
+The three repository datasets were exercised through the production parsing, real configured NVIDIA/Groq calls, normalization, indexing, retrieval, and structured RAG paths. Ground Truth files were excluded. These measurements are development-machine observations, not a hosted latency guarantee:
+
+| Synthetic dataset | Processing | Indexing | Retrieval | Structured RAG answer | End to end |
+|---|---:|---:|---:|---:|---:|
+| Set 1 — Maharashtra | 46.672 s | 16.677 s cold start | 0.026 s | 0.011 s | 63.656 s |
+| Set 2 — Karnataka | 23.685 s | 0.655 s warm | 0.020 s | 0.007 s | 24.436 s |
+| Set 3 — Gujarat | 32.394 s | 0.869 s warm | 0.035 s | 0.009 s | 33.367 s |
+
+All 21 business PDFs in this benchmark contained directly extractable text, so Tesseract OCR did not run. Scanned-image OCR time must be measured separately with scanned fixtures; it must not be inferred from these results. The current local multilingual embedding model also remains memory-intensive, which is the main reason the hosted free-tier warning is prominent.
 
 ### Active AI routing
 
@@ -1731,8 +1727,8 @@ GST Co-Pilot is a deployment-compatible functional hiring prototype with deliber
 - Validation rules and Option A reconciliation intentionally cover a prototype subset of Indian GST cases.
 - There is no direct GST Portal/ASP/GSP integration, return filing, DSC/EVC signing, tax payment, or final ITC decision.
 - There is no malware scanner/content-disarm platform, enterprise secret manager, multi-region failover, or formal security certification.
-- Render free-tier cold starts can affect demo latency.
-- The local Sentence Transformer increases backend image size and memory needs, although it is pre-cached for deployment parity.
+- Render free-tier cold starts can affect demo latency, and its 512 MB memory limit cannot safely guarantee every combined OCR/AI/RAG workload.
+- The unchanged local Sentence Transformer preserves the existing 384-dimensional vector space and retrieval accuracy, but increases backend image size and runtime memory even though it is pre-cached for deployment parity.
 
 ## Path to Production-Grade Scale
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -83,7 +83,48 @@ class NormalizedGSTRecord(BaseModel):
                 return datetime.strptime(text, date_format).date()
             except ValueError:
                 continue
-        return value
+        # AI providers sometimes return labels such as "not visible" despite the
+        # schema instruction. Missing evidence remains null; it must never make up
+        # a date or fail the complete document batch.
+        return None
+
+    @field_validator(
+        "taxable_value",
+        "gst_rate",
+        "igst",
+        "cgst",
+        "sgst_utgst",
+        "cess",
+        "total_tax",
+        "total_document_value",
+        mode="before",
+    )
+    @classmethod
+    def normalize_decimal_evidence(cls, value: Any) -> Any:
+        if value is None or isinstance(value, (int, float, Decimal)):
+            return value
+        if not isinstance(value, str):
+            # Preserve structurally invalid model values so Pydantic rejects the
+            # NVIDIA response and the existing Groq schema fallback can run.
+            return value
+        text = value.strip()
+        if not text or text.lower() in {"n/a", "na", "none", "null", "not visible", "-"}:
+            return None
+        negative = text.startswith("(") and text.endswith(")")
+        normalized = (
+            text.strip("()")
+            .replace("₹", "")
+            .replace("INR", "")
+            .replace("inr", "")
+            .replace(",", "")
+            .replace("%", "")
+            .strip()
+        )
+        try:
+            parsed = Decimal(normalized)
+        except InvalidOperation:
+            return None
+        return -parsed if negative else parsed
 
     @field_validator("source_page", "source_row", mode="before")
     @classmethod

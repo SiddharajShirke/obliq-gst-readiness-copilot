@@ -23,22 +23,55 @@ COLUMN_ALIASES = {
         "inv no",
         "bill no",
         "document number",
+        "document no",
+        "document no.",
+        "bill of entry no",
+        "bill of entry no.",
     },
     "invoice_date": {"invoice date", "invoice_date", "date", "bill date", "document date"},
     "supplier_name": {"supplier", "supplier name", "vendor", "vendor name", "party name"},
     "supplier_gstin": {"supplier gstin", "vendor gstin", "gstin", "supplier_gst_no"},
-    "customer_name": {"customer", "customer name", "buyer", "buyer name"},
+    "customer_name": {
+        "customer",
+        "customer name",
+        "buyer",
+        "buyer name",
+        "customer / recipient",
+    },
     "customer_gstin": {"customer gstin", "buyer gstin", "recipient gstin"},
-    "taxable_value": {"taxable amount", "taxable value", "taxable_value", "assessable value"},
-    "cgst": {"cgst", "cgst amount", "cgst_amt"},
-    "sgst": {"sgst", "sgst amount", "sgst_amt", "utgst"},
-    "igst": {"igst", "igst amount", "igst_amt"},
+    "taxable_value": {
+        "taxable amount",
+        "taxable value",
+        "taxable_value",
+        "assessable value",
+        "taxable",
+    },
+    "cgst": {"cgst", "cgst amount", "cgst_amt", "cgst charged"},
+    "sgst": {
+        "sgst",
+        "sgst amount",
+        "sgst_amt",
+        "utgst",
+        "sgst/utgst",
+        "sgst charged",
+    },
+    "igst": {"igst", "igst amount", "igst_amt", "igst charged"},
     "cess": {"cess", "cess amount"},
     "invoice_total": {"total", "invoice total", "invoice value", "grand total", "gross amount"},
     "gst_rate": {"gst rate", "tax rate", "rate %", "gst %"},
-    "itc_status": {"itc status", "itc availability", "itc eligibility"},
+    "itc_status": {"itc status", "itc availability", "itc eligibility", "itc intent", "itc"},
     "rcm_flag": {"rcm", "rcm flag", "reverse charge", "reverse charge flag"},
-    "transaction_type": {"transaction type", "supply type", "purchase/expense type", "note type"},
+    "rcm_tax_liability": {"rcm tax liability"},
+    "transaction_type": {
+        "transaction type",
+        "supply type",
+        "purchase/expense type",
+        "note type",
+        "doc type",
+        "document type",
+        "purchase category",
+        "supply category",
+    },
     "original_document_reference": {
         "original invoice reference",
         "original document reference",
@@ -197,6 +230,23 @@ def parse_normalized_table(
         frame = pd.DataFrame(payload)
     else:
         raise ValueError(f"Unsupported tabular extension: {extension}")
+    records, mapping = _normalized_records_from_frame(
+        frame,
+        document_type=document_type,
+        source_document_id=source_document_id,
+        tax_period=tax_period,
+    )
+    return _parsed_normalized_table(records, mapping)
+
+
+def _normalized_records_from_frame(
+    frame: pd.DataFrame,
+    *,
+    document_type: str,
+    source_document_id: str,
+    tax_period: str | None,
+    source_page: int | None = None,
+) -> tuple[list[NormalizedGSTRecord], dict[str, str]]:
     mapping = map_columns(list(frame.columns))
     if "invoice_number" not in mapping:
         raise ValueError("Could not identify a document-number column")
@@ -215,6 +265,14 @@ def parse_normalized_table(
         }
         present_taxes = [amount for amount in taxes.values() if amount is not None]
         total_tax = sum(present_taxes, Decimal("0")) if present_taxes else None
+        transaction_type = str(value("transaction_type") or "").strip().lower() or None
+        rcm_flag = _to_bool_optional(value("rcm_flag"))
+        rcm_liability = _to_decimal_optional(value("rcm_tax_liability"))
+        if rcm_flag is None and (
+            (rcm_liability is not None and rcm_liability != 0)
+            or "rcm" in str(transaction_type or "")
+        ):
+            rcm_flag = True
         record = NormalizedGSTRecord(
             tax_period=tax_period,
             document_type=document_type,
@@ -229,18 +287,26 @@ def parse_normalized_table(
             taxable_value=_to_decimal_optional(value("taxable_value")),
             gst_rate=_to_decimal_optional(value("gst_rate")),
             total_document_value=_to_decimal_optional(value("invoice_total")),
-            transaction_type=str(value("transaction_type") or "").strip().lower() or None,
+            transaction_type=transaction_type,
             itc_status=str(value("itc_status") or "").strip().lower() or None,
-            rcm_flag=_to_bool_optional(value("rcm_flag")),
+            rcm_flag=rcm_flag,
             original_document_reference=(
                 str(value("original_document_reference") or "").strip() or None
             ),
             source_document_id=source_document_id,
+            source_page=source_page,
             source_row=int(index) + 2,
             total_tax=total_tax,
             **taxes,
         )
         records.append(record)
+
+    return records, mapping
+
+
+def _parsed_normalized_table(
+    records: list[NormalizedGSTRecord], mapping: dict[str, str]
+) -> ParsedNormalizedTable:
 
     def money(field: str) -> Decimal:
         return sum(
@@ -265,10 +331,65 @@ def parse_normalized_table(
     )
 
 
-def read_pdf_text(content: bytes) -> str:
-    import fitz
+def _clean_pdf_table_cell(value: Any) -> str:
+    """Remove isolated watermark letters while preserving real table text."""
 
-    with fitz.open(stream=content, filetype="pdf") as document:
+    lines = [line.strip() for line in str(value or "").splitlines()]
+    meaningful = [line for line in lines if not re.fullmatch(r"[A-Z]", line)]
+    return " ".join(line for line in meaningful if line).strip()
+
+
+def parse_normalized_pdf_tables(
+    content: bytes,
+    *,
+    document_type: str,
+    source_document_id: str,
+    tax_period: str | None,
+) -> ParsedNormalizedTable | None:
+    """Extract structured register/GSTR-2B tables before considering an LLM."""
+
+    import pymupdf
+
+    records: list[NormalizedGSTRecord] = []
+    combined_mapping: dict[str, str] = {}
+    with pymupdf.open(stream=content, filetype="pdf") as document:
+        for page_number, page in enumerate(document, start=1):
+            for table in page.find_tables().tables:
+                extracted = table.extract()
+                if len(extracted) < 2:
+                    continue
+                headers = [_clean_pdf_table_cell(value) for value in extracted[0]]
+                frame = pd.DataFrame(
+                    [
+                        [_clean_pdf_table_cell(value) for value in row]
+                        for row in extracted[1:]
+                    ],
+                    columns=headers,
+                )
+                mapping = map_columns(headers)
+                if "invoice_number" not in mapping or not {
+                    "taxable_value",
+                    "invoice_total",
+                }.intersection(mapping):
+                    continue
+                table_records, table_mapping = _normalized_records_from_frame(
+                    frame,
+                    document_type=document_type,
+                    source_document_id=source_document_id,
+                    tax_period=tax_period,
+                    source_page=page_number,
+                )
+                records.extend(
+                    record for record in table_records if record.document_number is not None
+                )
+                combined_mapping.update(table_mapping)
+    return _parsed_normalized_table(records, combined_mapping) if records else None
+
+
+def read_pdf_text(content: bytes) -> str:
+    import pymupdf
+
+    with pymupdf.open(stream=content, filetype="pdf") as document:
         return "\n".join(page.get_text("text") for page in document).strip()
 
 
@@ -284,12 +405,12 @@ def read_image_text(content: bytes, *, tesseract_cmd: str = "") -> str:
 
 def read_scanned_pdf_text(content: bytes, *, tesseract_cmd: str = "") -> str:
     """OCR PDF pages with the deployment-packaged Tesseract binary."""
-    import fitz
+    import pymupdf
 
     pages: list[str] = []
-    with fitz.open(stream=content, filetype="pdf") as document:
+    with pymupdf.open(stream=content, filetype="pdf") as document:
         for page in document:
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
             pages.append(read_image_text(pixmap.tobytes("png"), tesseract_cmd=tesseract_cmd))
     return "\n".join(value for value in pages if value).strip()
 

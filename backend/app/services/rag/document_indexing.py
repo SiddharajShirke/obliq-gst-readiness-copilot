@@ -9,7 +9,7 @@ from typing import Any
 from app.config import Settings
 from app.repositories.base import DataStore
 from app.services.rag.chunking import chunk_document
-from app.services.rag.embeddings import embed_texts
+from app.services.rag.embeddings import embed_texts_async
 
 ELIGIBLE_REVIEW_STATUSES = {"approved", "edited_and_approved"}
 EXCLUDED_DOCUMENT_TYPES = {"developer_ground_truth", "unknown"}
@@ -155,7 +155,9 @@ async def index_document(
         return existing_ordered
 
     await remove_document_chunks(store, document_id)
-    vectors = embed_texts([source["content"] for source in sources], settings)
+    vectors = await embed_texts_async(
+        [source["content"] for source in sources], settings
+    )
     inserted: list[dict[str, Any]] = []
     for index, (source, embedding) in enumerate(zip(sources, vectors, strict=True)):
         inserted.append(

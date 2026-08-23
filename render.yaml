@@ -30,6 +30,14 @@ services:
         value: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
       - key: EMBEDDING_DIMENSION
         value: "384"
+      - key: HEAVY_PROCESSING_CONCURRENCY
+        value: "1"
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: TOKENIZERS_PARALLELISM
+        value: "false"
       - key: WHATSAPP_PROVIDER
         value: vonage
       - key: FRONTEND_URL

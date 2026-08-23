@@ -14,7 +14,10 @@ import {
   getSupabaseBrowserClient,
   isSupabaseAuthConfigured,
 } from "./supabase";
-import {bootstrapAuthenticatedWorkspace} from "./workspace-bootstrap";
+import {
+  bootstrapAuthenticatedWorkspace,
+  tryBootstrapAuthenticatedWorkspace,
+} from "./workspace-bootstrap";
 
 export type AuthUser = {email: string; name?: string; role?: string};
 type DemoRole = "admin" | "preparer" | "reviewer";
@@ -67,7 +70,7 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
       void supabase.auth.getSession()
         .then(async ({data}) => {
           if (data.session) {
-            await bootstrapAuthenticatedWorkspace(data.session.access_token);
+            await tryBootstrapAuthenticatedWorkspace(data.session.access_token);
           }
           setUser(sessionUser(data.session));
         })
@@ -76,7 +79,7 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
       const {data: listener} = supabase.auth.onAuthStateChange((_event, session) => {
         void (async () => {
           if (session) {
-            await bootstrapAuthenticatedWorkspace(session.access_token);
+            await tryBootstrapAuthenticatedWorkspace(session.access_token);
           }
           setUser(sessionUser(session));
         })().catch(() => setUser(null));
