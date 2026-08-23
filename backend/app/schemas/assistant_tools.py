@@ -77,3 +77,13 @@ class QueryPlan(BaseModel):
     clarification: str | None = None
     action_type: AssistantActionType | None = None
     action_parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class StructuredToolResult(BaseModel):
+    domain: QueryDomain
+    operation: QueryOperation
+    data: Any = None
+    value: Any = None
+    row_count: int = 0
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    explanation: str | None = None
