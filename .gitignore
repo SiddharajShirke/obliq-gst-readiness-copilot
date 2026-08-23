@@ -22,6 +22,7 @@ venv/
 # Node
 node_modules/
 .next/
+frontend/next-env.d.ts
 out/
 coverage/
 .coverage
