@@ -196,4 +196,8 @@ Manual cleanup is available because this phase adds no scheduler:
 
 See [local setup](docs/local-setup.md), [deployment](docs/deployment.md), [architecture](docs/architecture.md), [demo walkthrough](docs/demo-walkthrough.md), and [limitations](docs/limitations.md).
 
+For the current Render backend + Vercel frontend release procedure, exact environment matrix,
+Docker parity smoke test, Supabase Auth settings, and Vonage production callback steps, use
+[Render + Vercel deployment](docs/deployment/render-vercel.md).
+
 Never commit `.env`, frontend local environment files, Vonage credentials, Supabase service-role keys, LLM keys, Fernet keys, or HMAC peppers.

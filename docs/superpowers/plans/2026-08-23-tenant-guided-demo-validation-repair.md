@@ -76,4 +76,3 @@ repairs without regressing Phase 1-4.
 3. Run backend lint, frontend lint, frontend production build, Docker build, migration
    checks, `git diff --check`, and secret scan.
 4. Inspect the final diff/status and report manual/live checks separately from mocks.
-

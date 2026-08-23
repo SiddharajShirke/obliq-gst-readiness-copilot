@@ -89,4 +89,3 @@ user-created record. The four verified fixed seeded clients (ABC Electronics, No
 Services, City Retail, Mehta Consulting) and their dependent database rows/private
 Storage objects are removed by exact IDs after a dry run. Future seed tooling creates
 only the Raj Traders template. Cleanup never matches arbitrary client names.
-
