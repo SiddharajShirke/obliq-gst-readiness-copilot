@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     embedding_provider: str = "local"
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     embedding_dimension: int = 384
+    embedding_warmup_enabled: bool = False
     rag_vector_top_k: int = 12
     rag_final_top_k: int = 5
     rag_min_similarity: float = 0.45

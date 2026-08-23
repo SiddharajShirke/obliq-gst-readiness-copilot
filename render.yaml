@@ -30,6 +30,8 @@ services:
         value: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
       - key: EMBEDDING_DIMENSION
         value: "384"
+      - key: EMBEDDING_WARMUP_ENABLED
+        value: "false"
       - key: HEAVY_PROCESSING_CONCURRENCY
         value: "1"
       - key: OMP_NUM_THREADS

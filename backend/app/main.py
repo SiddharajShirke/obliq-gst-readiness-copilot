@@ -45,8 +45,16 @@ async def lifespan(_: FastAPI):
         settings.embedding_provider,
     )
     warmup_task: asyncio.Task[None] | None = None
-    if settings.ai_mode == "live" and settings.embedding_provider != "mock":
+    if (
+        settings.embedding_warmup_enabled
+        and settings.ai_mode == "live"
+        and settings.embedding_provider != "mock"
+    ):
         warmup_task = asyncio.create_task(_warm_embeddings_safely())
+    elif settings.embedding_provider != "mock":
+        logging.getLogger(__name__).info(
+            "RAG embedding warmup disabled; provider will load on first RAG use"
+        )
     try:
         yield
     finally:
