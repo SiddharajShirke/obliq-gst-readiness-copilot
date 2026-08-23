@@ -10,6 +10,16 @@ class FindingResolution(BaseModel):
     status: str = Field(pattern="^(resolved|accepted)$")
 
 
+class BulkFindingResolution(BaseModel):
+    finding_ids: list[str] = Field(min_length=1, max_length=500)
+    status: Literal["resolved", "accepted"]
+
+
+class BulkReconciliationReview(BaseModel):
+    item_ids: list[str] = Field(min_length=1, max_length=500)
+    action: Literal["mark_reviewed"] = "mark_reviewed"
+
+
 class ReturnToPreparer(BaseModel):
     notes: str = Field(min_length=3, max_length=2000)
 

@@ -109,7 +109,12 @@ async def test_reconciliation_persistence_payload_is_json_serializable() -> None
 
         async def get_row(self, table: str, row_id: str):
             if table == "applications" and row_id == application_id:
-                return {"id": application_id, "firm_id": firm_id, "client_id": "client-id"}
+                return {
+                    "id": application_id,
+                    "firm_id": firm_id,
+                    "client_id": "client-id",
+                    "status": "ready_for_filing",
+                }
             return None
 
         async def list_rows(self, table: str, filters=None, **kwargs):

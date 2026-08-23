@@ -1,3 +1,4 @@
+import asyncio
 import json
 from io import BytesIO
 
@@ -5,6 +6,7 @@ import pandas as pd
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.repositories import get_store
 
 client = TestClient(app)
 AUTH = {"Authorization": "Bearer demo-admin-token"}
@@ -53,6 +55,20 @@ def test_reconciliation_and_readiness_exports() -> None:
         },
     )
     assert purchase.status_code == 201
+
+    store = get_store()
+    purchase_records = asyncio.run(store.list_rows("invoice_records", {"application_id": APP_ID}))
+    for row in purchase_records:
+        asyncio.run(store.update_row("invoice_records", row["id"], {"review_status": "approved"}))
+    validation = client.post(f"/api/v1/applications/{APP_ID}/validate", headers=AUTH)
+    assert validation.status_code == 200, validation.text
+    for finding in validation.json()["findings"]:
+        resolved = client.post(
+            f"/api/v1/findings/{finding['id']}/resolve",
+            headers=AUTH,
+            json={"status": "accepted"},
+        )
+        assert resolved.status_code == 200, resolved.text
 
     gstr_payload = {
         "records": [
@@ -103,9 +119,47 @@ def test_reconciliation_and_readiness_exports() -> None:
 
     readiness = client.get(f"/api/v1/applications/{APP_ID}/readiness-summary", headers=AUTH)
     assert readiness.status_code == 200
-    assert readiness.json()["reconciliation"]["exact_match"] == 1
-    assert "subject to CA review" in readiness.json()["disclaimer"]
+    assert readiness.json()["reconciliation"]["summary"]["exact_match"] == 1
+    assert "subject to CA verification" in readiness.json()["disclaimer"]
+    assert readiness.json()["readiness"]["ready_for_filing"] is True
 
     export = client.post(f"/api/v1/applications/{APP_ID}/export", headers=AUTH)
     assert export.status_code == 200
-    assert {"readiness_pdf", "invoice_csv", "reconciliation_csv"}.issubset(export.json())
+    assert {
+        "preparatory_report_pdf",
+        "document_manifest_csv",
+        "normalized_sales_csv",
+        "normalized_purchase_csv",
+        "validation_summary_csv",
+    }.issubset(export.json())
+
+    premature_reconciliation_export = client.post(
+        f"/api/v1/applications/{APP_ID}/reconciliation/export", headers=AUTH
+    )
+    assert premature_reconciliation_export.status_code == 409
+    review_required = [
+        row["id"] for row in reconciliation.json()["items"] if row["match_status"] != "exact_match"
+    ]
+    reviewed = client.post(
+        f"/api/v1/applications/{APP_ID}/reconciliation/items/bulk-review",
+        headers=AUTH,
+        json={"item_ids": review_required, "action": "mark_reviewed"},
+    )
+    assert reviewed.status_code == 200, reviewed.text
+    reconciliation_export = client.post(
+        f"/api/v1/applications/{APP_ID}/reconciliation/export", headers=AUTH
+    )
+    assert reconciliation_export.status_code == 200, reconciliation_export.text
+    assert {
+        "reconciliation_report_pdf",
+        "reconciliation_details_csv",
+        "reconciliation_export_zip",
+    }.issubset(reconciliation_export.json())
+    repeated_reconciliation_export = client.post(
+        f"/api/v1/applications/{APP_ID}/reconciliation/export", headers=AUTH
+    )
+    assert repeated_reconciliation_export.status_code == 200
+    assert (
+        reconciliation_export.json()["reconciliation_export_zip"]
+        != repeated_reconciliation_export.json()["reconciliation_export_zip"]
+    )

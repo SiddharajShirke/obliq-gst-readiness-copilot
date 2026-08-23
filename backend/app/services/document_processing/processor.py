@@ -60,9 +60,7 @@ class DocumentProcessor:
 
     async def process(self, document_id: str) -> dict[str, Any]:
         try:
-            result = await self.graph.ainvoke(
-                {"document_id": document_id, "status": "started"}
-            )
+            result = await self.graph.ainvoke({"document_id": document_id, "status": "started"})
             await self.store.update_row("documents", document_id, {"processing_error": None})
             return result
         except Exception as exc:
@@ -535,12 +533,6 @@ class DocumentProcessor:
         if not application or not client:
             raise ValueError("Document application or client not found")
 
-        old_findings = await self.store.list_rows(
-            "validation_findings", {"document_id": document["id"]}
-        )
-        for finding in old_findings:
-            await self.store.delete_row("validation_findings", finding["id"])
-
         findings: list[dict[str, Any]] = []
         inputs: list[InvoiceInput] = []
         for row in state.get("invoice_rows", []):
@@ -555,20 +547,13 @@ class DocumentProcessor:
                 else None,
             ):
                 findings.append(
-                    await self.store.insert_row(
-                        "validation_findings",
-                        {
-                            "firm_id": document["firm_id"],
-                            "application_id": document["application_id"],
-                            "document_id": document["id"],
-                            "invoice_record_id": row.get("id"),
-                            "finding_type": finding.finding_type,
-                            "severity": finding.severity,
-                            "message": finding.message,
-                            "details": finding.details,
-                            "status": "open",
-                        },
-                    )
+                    {
+                        "invoice_record_id": row.get("id"),
+                        "finding_type": finding.finding_type,
+                        "severity": finding.severity,
+                        "message": finding.message,
+                        "details": finding.details,
+                    }
                 )
 
         all_records = await self.store.list_rows(
@@ -580,19 +565,12 @@ class DocumentProcessor:
             if not any(row.get("id") in record_ids for row in state.get("invoice_rows", [])):
                 continue
             findings.append(
-                await self.store.insert_row(
-                    "validation_findings",
-                    {
-                        "firm_id": document["firm_id"],
-                        "application_id": document["application_id"],
-                        "document_id": document["id"],
-                        "finding_type": "duplicate_invoice",
-                        "severity": "medium",
-                        "message": "A possible duplicate invoice was detected.",
-                        "details": {"invoice_record_ids": record_ids},
-                        "status": "open",
-                    },
-                )
+                {
+                    "finding_type": "duplicate_invoice",
+                    "severity": "medium",
+                    "message": "A possible duplicate invoice was detected.",
+                    "details": {"invoice_record_ids": record_ids},
+                }
             )
 
         processing_status = "needs_review" if findings else "ready_for_review"

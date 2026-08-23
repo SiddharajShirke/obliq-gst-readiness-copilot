@@ -4,6 +4,7 @@ import hashlib
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Any
+from uuid import uuid4
 
 from fastapi import (
     APIRouter,
@@ -21,28 +22,69 @@ from app.config import Settings, get_settings
 from app.dependencies import current_user, require_firm_row, require_roles
 from app.repositories import DataStore, get_store
 from app.schemas.auth import UserContext
-from app.schemas.compliance import FindingResolution, ReturnToPreparer, ValidationCorrectionRequest
+from app.schemas.compliance import (
+    BulkFindingResolution,
+    BulkReconciliationReview,
+    FindingResolution,
+    ReturnToPreparer,
+    ValidationCorrectionRequest,
+)
 from app.services.alert_explanations import build_alert_evidence
 from app.services.audit import record_audit
 from app.services.document_processing.pipeline import ingest_document, process_ingested_document
 from app.services.readiness import build_readiness_summary
 from app.services.reconciliation import ReconciliationRecord, reconcile_records
 from app.services.reports import (
+    generate_document_manifest_csv,
+    generate_export_archive,
     generate_invoice_csv,
     generate_readiness_pdf,
     generate_reconciliation_csv,
+    generate_reconciliation_pdf,
+    generate_validation_csv,
 )
 from app.services.secure_upload import (
     ResolvedUploadContext,
     SecureUploadValidationError,
 )
-from app.services.validation import InvoiceInput, detect_duplicate_groups, validate_invoice
 from app.services.validation_corrections import (
     apply_correction_proposal,
     create_correction_proposal,
 )
+from app.services.validation_portfolio import get_validation_portfolio
+from app.services.validation_workflow import run_application_validation
+from app.services.workflow_progress import (
+    get_workflow_progress,
+    sync_ready_for_filing_state,
+)
 
 router = APIRouter(tags=["compliance"])
+
+
+async def _sync_and_audit_readiness(
+    store: DataStore,
+    *,
+    application: dict[str, Any],
+    user: UserContext,
+) -> dict[str, Any]:
+    progress, changed_to_ready = await sync_ready_for_filing_state(store, str(application["id"]))
+    if changed_to_ready:
+        for action in ("validation_review_completed", "ready_for_filing_reached"):
+            await record_audit(
+                store,
+                firm_id=user.firm_id,
+                user_id=user.user_id,
+                action=action,
+                entity_type="application",
+                entity_id=str(application["id"]),
+                client_id=application["client_id"],
+                application_id=str(application["id"]),
+                after_data={
+                    "validation_review_percent": 100,
+                    "ready_for_filing": True,
+                },
+            )
+    return progress
 
 
 def _alert_type(item: dict[str, Any]) -> str:
@@ -251,87 +293,13 @@ async def validate_application(
     store: Annotated[DataStore, Depends(get_store)],
 ) -> dict:
     application = await require_firm_row(store, "applications", application_id, user.firm_id)
-    client = await store.get_row("clients", application["client_id"])
-    assert client is not None
-    all_records = await store.list_rows("invoice_records", {"application_id": application_id})
-    records = [
-        row for row in all_records
-        if row.get("review_status") in {"approved", "edited_and_approved"}
-    ]
-    old = await store.list_rows("validation_findings", {"application_id": application_id})
-    for row in old:
-        await store.delete_row("validation_findings", row["id"])
-
-    inserted: list[dict[str, Any]] = []
-    inputs: list[InvoiceInput] = []
-    record_map: dict[str, dict[str, Any]] = {}
-    for row in records:
-        invoice = InvoiceInput(
-            supplier_name=row.get("supplier_name"),
-            supplier_gstin=row.get("supplier_gstin"),
-            customer_name=row.get("customer_name"),
-            customer_gstin=row.get("customer_gstin"),
-            invoice_number=row.get("invoice_number"),
-            invoice_date=_date(row["invoice_date"]) if row.get("invoice_date") else None,
-            taxable_value=row.get("taxable_value"),
-            cgst=row.get("cgst"),
-            sgst=row.get("sgst"),
-            igst=row.get("igst"),
-            cess=row.get("cess"),
-            invoice_total=row.get("invoice_total"),
-            metadata={"record_id": row["id"]},
-        )
-        inputs.append(invoice)
-        record_map[row["id"]] = row
-        expected = client.get("gstin") if row.get("invoice_category") == "sales" else None
-        for finding in validate_invoice(
-            invoice,
-            period_start=_date(application["period_start"]),
-            period_end=_date(application["period_end"]),
-            expected_customer_gstin=expected,
-        ):
-            inserted.append(
-                await store.insert_row(
-                    "validation_findings",
-                    {
-                        "firm_id": user.firm_id,
-                        "application_id": application_id,
-                        "document_id": row.get("document_id"),
-                        "invoice_record_id": row["id"],
-                        "finding_type": finding.finding_type,
-                        "severity": finding.severity,
-                        "message": finding.message,
-                        "details": finding.details,
-                        "status": "open",
-                    },
-                )
-            )
-
-    for group in detect_duplicate_groups(inputs):
-        ids = [item.metadata["record_id"] for item in group]
-        inserted.append(
-            await store.insert_row(
-                "validation_findings",
-                {
-                    "firm_id": user.firm_id,
-                    "application_id": application_id,
-                    "document_id": record_map[ids[0]].get("document_id"),
-                    "invoice_record_id": ids[0],
-                    "finding_type": "duplicate_invoice",
-                    "severity": "medium",
-                    "message": "A possible duplicate invoice was detected.",
-                    "details": {"invoice_record_ids": ids},
-                    "status": "open",
-                },
-            )
-        )
-    await store.update_row("applications", application_id, {"status": "validation_review"})
-    return {
-        "finding_count": len(inserted),
-        "findings": inserted,
-        "eligible_record_count": len(records),
-        "pending_review_count": len(all_records) - len(records),
-    }
+    result = await run_application_validation(
+        store,
+        application_id=application_id,
+        firm_id=user.firm_id,
+    )
+    workflow = await _sync_and_audit_readiness(store, application=application, user=user)
+    return {**result.as_dict(), "workflow": workflow}
 
 
 @router.get("/applications/{application_id}/findings")
@@ -344,6 +312,16 @@ async def list_findings(
     return await store.list_rows(
         "validation_findings", {"application_id": application_id}, order="created_at", desc=True
     )
+
+
+@router.get("/applications/{application_id}/validation-portfolio")
+async def validation_portfolio(
+    application_id: str,
+    user: Annotated[UserContext, Depends(current_user)],
+    store: Annotated[DataStore, Depends(get_store)],
+) -> dict[str, Any]:
+    await require_firm_row(store, "applications", application_id, user.firm_id)
+    return await get_validation_portfolio(store, application_id)
 
 
 @router.post("/findings/{finding_id}/resolve")
@@ -366,7 +344,57 @@ async def resolve_finding(
         },
     )
     assert updated is not None
-    return updated
+    application = await require_firm_row(
+        store, "applications", str(finding["application_id"]), user.firm_id
+    )
+    workflow = await _sync_and_audit_readiness(store, application=application, user=user)
+    return {**updated, "workflow": workflow}
+
+
+@router.post("/applications/{application_id}/findings/bulk-review")
+async def bulk_review_findings(
+    application_id: str,
+    payload: BulkFindingResolution,
+    user: Annotated[UserContext, Depends(require_roles("firm_admin", "reviewer"))],
+    store: Annotated[DataStore, Depends(get_store)],
+) -> dict[str, Any]:
+    application = await require_firm_row(store, "applications", application_id, user.firm_id)
+    requested_ids = list(dict.fromkeys(payload.finding_ids))
+    findings = [
+        await store.get_row("validation_findings", finding_id) for finding_id in requested_ids
+    ]
+    if any(
+        finding is None
+        or str(finding.get("application_id")) != str(application_id)
+        or str(finding.get("firm_id")) != str(user.firm_id)
+        for finding in findings
+    ):
+        raise HTTPException(
+            status_code=404, detail="One or more validation findings were not found"
+        )
+    typed_findings = [finding for finding in findings if finding is not None]
+    if any(finding.get("status") != "open" for finding in typed_findings):
+        raise HTTPException(status_code=409, detail="Only open validation findings are eligible")
+    now = datetime.now(UTC).isoformat()
+    for finding in typed_findings:
+        await store.update_row(
+            "validation_findings",
+            str(finding["id"]),
+            {"status": payload.status, "resolved_by": user.user_id, "resolved_at": now},
+        )
+    await record_audit(
+        store,
+        firm_id=user.firm_id,
+        user_id=user.user_id,
+        action="bulk_validation_review",
+        entity_type="application",
+        entity_id=application_id,
+        client_id=application["client_id"],
+        application_id=application_id,
+        metadata={"finding_count": len(typed_findings), "status": payload.status},
+    )
+    workflow = await _sync_and_audit_readiness(store, application=application, user=user)
+    return {"updated_count": len(typed_findings), "status": payload.status, "workflow": workflow}
 
 
 @router.post("/findings/{finding_id}/raise-alert", status_code=status.HTTP_201_CREATED)
@@ -389,7 +417,8 @@ async def raise_validation_alert(
     client = await store.get_row("clients", application["client_id"])
     record = (
         await store.get_row("invoice_records", finding["invoice_record_id"])
-        if finding.get("invoice_record_id") else None
+        if finding.get("invoice_record_id")
+        else None
     )
     alert_type = str(finding.get("finding_type") or "validation_review").upper()
     detail_fields = [str(key) for key in (finding.get("details") or {}).keys()]
@@ -403,23 +432,26 @@ async def raise_validation_alert(
             "difference_fields": detail_fields,
         },
     )
-    alert = await store.insert_row("alerts", {
-        "firm_id": user.firm_id,
-        "application_id": application["id"],
-        "client_id": application["client_id"],
-        "validation_finding_id": finding_id,
-        "reconciliation_item_id": None,
-        "workflow_area": "validation",
-        "alert_category": alert_type,
-        "alert_type": alert_type,
-        "title": alert_type.replace("_", " ").title(),
-        "message": finding.get("message") or "Validation evidence requires CA review.",
-        "severity": finding.get("severity") or "medium",
-        "status": "open",
-        "evidence": evidence,
-        "ai_explanation": None,
-        "ai_explanation_status": "pending",
-    })
+    alert = await store.insert_row(
+        "alerts",
+        {
+            "firm_id": user.firm_id,
+            "application_id": application["id"],
+            "client_id": application["client_id"],
+            "validation_finding_id": finding_id,
+            "reconciliation_item_id": None,
+            "workflow_area": "validation",
+            "alert_category": alert_type,
+            "alert_type": alert_type,
+            "title": alert_type.replace("_", " ").title(),
+            "message": finding.get("message") or "Validation evidence requires CA review.",
+            "severity": finding.get("severity") or "medium",
+            "status": "open",
+            "evidence": evidence,
+            "ai_explanation": None,
+            "ai_explanation_status": "pending",
+        },
+    )
     await record_audit(
         store,
         firm_id=user.firm_id,
@@ -442,9 +474,7 @@ async def raise_validation_alert(
     return alert
 
 
-@router.post(
-    "/applications/{application_id}/validation-corrections/proposals", status_code=201
-)
+@router.post("/applications/{application_id}/validation-corrections/proposals", status_code=201)
 async def propose_validation_correction(
     application_id: str,
     payload: ValidationCorrectionRequest,
@@ -521,9 +551,7 @@ async def apply_validation_correction(
     # Corrections are proposals until the CA applies them. Once accepted, rebuild the
     # deterministic findings from approved records so the Validation tab never shows
     # stale evidence. This remains local/background-free deterministic work.
-    revalidation = await validate_application(
-        str(proposal["application_id"]), user, store
-    )
+    revalidation = await validate_application(str(proposal["application_id"]), user, store)
     return {**updated, "revalidation": revalidation}
 
 
@@ -536,10 +564,15 @@ async def reject_validation_correction(
     proposal = await _require_correction_proposal(store, proposal_id, user.firm_id)
     if proposal.get("status") != "proposed":
         raise HTTPException(status_code=409, detail="Correction proposal has already been decided")
-    updated = await store.update_row("validation_correction_proposals", proposal_id, {
-        "status": "rejected", "decided_by": user.user_id,
-        "decided_at": datetime.now(UTC).isoformat(),
-    })
+    updated = await store.update_row(
+        "validation_correction_proposals",
+        proposal_id,
+        {
+            "status": "rejected",
+            "decided_by": user.user_id,
+            "decided_at": datetime.now(UTC).isoformat(),
+        },
+    )
     assert updated is not None
     return updated
 
@@ -551,6 +584,12 @@ async def run_reconciliation(
     store: Annotated[DataStore, Depends(get_store)],
 ) -> dict:
     application = await require_firm_row(store, "applications", application_id, user.firm_id)
+    readiness = await get_workflow_progress(store, application_id)
+    if not readiness["reconciliation"]["available"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Complete Validation Review before starting GSTR-2B reconciliation",
+        )
     rows = await store.list_rows("invoice_records", {"application_id": application_id})
     usable = [
         row
@@ -610,7 +649,7 @@ async def run_reconciliation(
                 },
             )
         )
-    await store.update_row("applications", application_id, {"status": "reconciliation_review"})
+    await _sync_and_audit_readiness(store, application=application, user=user)
     await record_audit(
         store,
         firm_id=user.firm_id,
@@ -655,7 +694,91 @@ async def review_reconciliation_item(
         client_id=(application or {}).get("client_id"),
         application_id=run["application_id"],
     )
+    workflow = await get_workflow_progress(store, str(run["application_id"]))
+    if workflow["reconciliation"]["export_enabled"]:
+        await record_audit(
+            store,
+            firm_id=user.firm_id,
+            user_id=user.user_id,
+            action="reconciliation_review_completed",
+            entity_type="reconciliation_run",
+            entity_id=str(run["id"]),
+            client_id=(application or {}).get("client_id"),
+            application_id=str(run["application_id"]),
+            after_data={"reconciliation_review_percent": 100},
+        )
     return updated
+
+
+@router.post("/applications/{application_id}/reconciliation/items/bulk-review")
+async def bulk_review_reconciliation_items(
+    application_id: str,
+    payload: BulkReconciliationReview,
+    user: Annotated[UserContext, Depends(require_roles("firm_admin", "reviewer"))],
+    store: Annotated[DataStore, Depends(get_store)],
+) -> dict[str, Any]:
+    application = await require_firm_row(store, "applications", application_id, user.firm_id)
+    runs = await store.list_rows(
+        "reconciliation_runs",
+        {"application_id": application_id},
+        order="created_at",
+        desc=True,
+        limit=1,
+    )
+    if not runs:
+        raise HTTPException(status_code=409, detail="Run reconciliation before reviewing findings")
+    latest_run = runs[0]
+    requested_ids = list(dict.fromkeys(payload.item_ids))
+    items = [await store.get_row("reconciliation_items", item_id) for item_id in requested_ids]
+    if any(
+        item is None or str(item.get("reconciliation_run_id")) != str(latest_run["id"])
+        for item in items
+    ):
+        raise HTTPException(
+            status_code=404, detail="One or more reconciliation findings were not found"
+        )
+    typed_items = [item for item in items if item is not None]
+    if any(
+        item.get("match_status") == "exact_match"
+        or item.get("review_status") in {"reviewed", "resolved"}
+        for item in typed_items
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Only pending findings requiring CA review are eligible",
+        )
+    now = datetime.now(UTC).isoformat()
+    for item in typed_items:
+        await store.update_row(
+            "reconciliation_items",
+            str(item["id"]),
+            {"review_status": "reviewed", "reviewed_by": user.user_id, "reviewed_at": now},
+        )
+    await record_audit(
+        store,
+        firm_id=user.firm_id,
+        user_id=user.user_id,
+        action="bulk_reconciliation_review",
+        entity_type="reconciliation_run",
+        entity_id=str(latest_run["id"]),
+        client_id=application["client_id"],
+        application_id=application_id,
+        metadata={"item_count": len(typed_items), "action": payload.action},
+    )
+    workflow = await get_workflow_progress(store, application_id)
+    if workflow["reconciliation"]["export_enabled"]:
+        await record_audit(
+            store,
+            firm_id=user.firm_id,
+            user_id=user.user_id,
+            action="reconciliation_review_completed",
+            entity_type="reconciliation_run",
+            entity_id=str(latest_run["id"]),
+            client_id=application["client_id"],
+            application_id=application_id,
+            after_data={"reconciliation_review_percent": 100},
+        )
+    return {"updated_count": len(typed_items), "workflow": workflow}
 
 
 @router.get("/applications/{application_id}/reconciliation")
@@ -673,9 +796,19 @@ async def get_reconciliation(
         limit=1,
     )
     if not runs:
-        return {"summary": {}, "items": []}
+        workflow = await get_workflow_progress(store, application_id)
+        return {
+            "summary": {},
+            "items": [],
+            "review_progress": workflow["reconciliation"],
+        }
     items = await store.list_rows("reconciliation_items", {"reconciliation_run_id": runs[0]["id"]})
-    return {**runs[0], "items": items}
+    workflow = await get_workflow_progress(store, application_id)
+    return {
+        **runs[0],
+        "items": items,
+        "review_progress": workflow["reconciliation"],
+    }
 
 
 @router.get("/applications/{application_id}/readiness-summary")
@@ -701,36 +834,120 @@ async def export_application(
     client = await store.get_row("clients", application["client_id"])
     assert client is not None
     summary = await build_readiness_summary(store, application=application, client=client)
-    invoices = await store.list_rows("invoice_records", {"application_id": application_id})
-    reconciliation = await get_reconciliation(application_id, user, store)
+    if not summary["readiness"]["main_export_enabled"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Complete Validation Review before exporting the GST preparation pack",
+        )
     files = {
-        "readiness_pdf": (
-            "readiness-report.pdf",
+        "preparatory_report_pdf": (
+            "GST_Readiness_Preparatory_Report.pdf",
             generate_readiness_pdf(summary),
             "application/pdf",
         ),
-        "invoice_csv": ("extracted-invoices.csv", generate_invoice_csv(invoices), "text/csv"),
-        "reconciliation_csv": (
-            "gstr2b-reconciliation.csv",
-            generate_reconciliation_csv(reconciliation.get("items", [])),
-            "text/csv",
+        "document_manifest_csv": (
+            "Document_Manifest.csv",
+            generate_document_manifest_csv(summary["document_manifest"]),
+            "text/csv; charset=utf-8",
+        ),
+        "normalized_sales_csv": (
+            "Normalized_Sales_Data.csv",
+            generate_invoice_csv(summary["sales_records"]),
+            "text/csv; charset=utf-8",
+        ),
+        "normalized_purchase_csv": (
+            "Normalized_Purchase_Data.csv",
+            generate_invoice_csv(summary["purchase_records"]),
+            "text/csv; charset=utf-8",
+        ),
+        "validation_summary_csv": (
+            "Validation_Summary.csv",
+            generate_validation_csv(summary["validation"]["findings"]),
+            "text/csv; charset=utf-8",
         ),
     }
+    files["export_pack_zip"] = (
+        "OBLIQ_GST_Preparation_Export_Pack.zip",
+        generate_export_archive(
+            {filename: content for filename, content, _mime_type in files.values()}
+        ),
+        "application/zip",
+    )
+    generation_id = uuid4().hex
     output: dict[str, str] = {}
     for key, (filename, content, mime_type) in files.items():
-        path = f"{user.firm_id}/{client['id']}/{application_id}/{filename}"
+        path = f"{user.firm_id}/{client['id']}/{application_id}/exports/{generation_id}/{filename}"
         await store.upload_file(settings.supabase_exports_bucket, path, content, mime_type)
         output[key] = await store.create_signed_url(settings.supabase_exports_bucket, path, 1800)
     await record_audit(
         store,
         firm_id=user.firm_id,
         user_id=user.user_id,
-        action="application.exported",
+        action="gst_export_pack_generated",
         entity_type="application",
         entity_id=application_id,
         client_id=client["id"],
         application_id=application_id,
-        after_data={"files": list(output)},
+        after_data={"generation_id": generation_id, "files": list(output)},
+    )
+    return output
+
+
+@router.post("/applications/{application_id}/reconciliation/export")
+async def export_reconciliation(
+    application_id: str,
+    user: Annotated[UserContext, Depends(current_user)],
+    store: Annotated[DataStore, Depends(get_store)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict[str, str]:
+    application = await require_firm_row(store, "applications", application_id, user.firm_id)
+    client = await store.get_row("clients", application["client_id"])
+    assert client is not None
+    summary = await build_readiness_summary(store, application=application, client=client)
+    if not summary["workflow"]["reconciliation"]["export_enabled"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Complete Reconciliation Review before exporting the reconciliation working",
+        )
+    files = {
+        "reconciliation_report_pdf": (
+            "GSTR2B_Reconciliation_Working_Report.pdf",
+            generate_reconciliation_pdf(summary),
+            "application/pdf",
+        ),
+        "reconciliation_details_csv": (
+            "GSTR2B_Reconciliation_Details.csv",
+            generate_reconciliation_csv(summary["reconciliation_items"]),
+            "text/csv; charset=utf-8",
+        ),
+    }
+    files["reconciliation_export_zip"] = (
+        "OBLIQ_GSTR2B_Reconciliation_Export.zip",
+        generate_export_archive(
+            {filename: content for filename, content, _mime_type in files.values()}
+        ),
+        "application/zip",
+    )
+    generation_id = uuid4().hex
+    output: dict[str, str] = {}
+    for key, (filename, content, mime_type) in files.items():
+        path = (
+            f"{user.firm_id}/{client['id']}/{application_id}/reconciliation/"
+            f"exports/{generation_id}/{filename}"
+        )
+        await store.upload_file(settings.supabase_exports_bucket, path, content, mime_type)
+        output[key] = await store.create_signed_url(settings.supabase_exports_bucket, path, 1800)
+    latest_run = summary["reconciliation"].get("run") or {}
+    await record_audit(
+        store,
+        firm_id=user.firm_id,
+        user_id=user.user_id,
+        action="reconciliation_export_generated",
+        entity_type="reconciliation_run",
+        entity_id=str(latest_run.get("id") or application_id),
+        client_id=client["id"],
+        application_id=application_id,
+        after_data={"generation_id": generation_id, "files": list(output)},
     )
     return output
 

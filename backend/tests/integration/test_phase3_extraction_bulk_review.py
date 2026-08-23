@@ -78,6 +78,8 @@ def test_bulk_review_approves_selected_records_and_preserves_original_extraction
     )
     assert response.status_code == 200, response.text
     assert response.json()["updated_count"] == 2
+    assert response.json()["workflow"]["current_stage"] == "validation_review"
+    assert response.json()["workflow"]["validation_ran"] is True
     assert all(
         asyncio.run(store.get_row("invoice_records", row["id"]))["review_status"] == "approved"
         for row in records
@@ -88,6 +90,37 @@ def test_bulk_review_approves_selected_records_and_preserves_original_extraction
     assert (
         asyncio.run(store.get_row("documents", document["id"]))["processing_status"] == "approved"
     )
+    assert asyncio.run(store.get_row("applications", APP_ID))["status"] == "validation_review"
+
+
+def test_partial_bulk_review_keeps_extraction_review_until_all_records_are_reviewed() -> None:
+    store, _, _, records = _seed_review_rows()
+    first = client.post(
+        f"/api/v1/applications/{APP_ID}/extractions/bulk-review",
+        headers=AUTH,
+        json={"record_ids": [records[0]["id"]], "action": "approve"},
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["workflow"]["current_stage"] == "extraction_review"
+    assert first.json()["workflow"]["pending_record_count"] == 1
+    assert asyncio.run(store.list_rows("validation_findings", {"application_id": APP_ID})) == []
+
+    second = client.post(
+        f"/api/v1/applications/{APP_ID}/extractions/bulk-review",
+        headers=AUTH,
+        json={"record_ids": [records[1]["id"]], "action": "reject"},
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["workflow"]["current_stage"] == "validation_review"
+    assert second.json()["workflow"]["approved_record_count"] == 1
+    assert second.json()["workflow"]["rejected_record_count"] == 1
+    finding_record_ids = {
+        item["invoice_record_id"]
+        for item in asyncio.run(store.list_rows("validation_findings", {"application_id": APP_ID}))
+        if item.get("invoice_record_id")
+    }
+    assert records[0]["id"] in finding_record_ids
+    assert records[1]["id"] not in finding_record_ids
 
 
 def test_bulk_review_rejects_cross_application_record_ids() -> None:

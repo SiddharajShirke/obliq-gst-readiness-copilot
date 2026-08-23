@@ -11,6 +11,7 @@ from app.services.audit import record_audit
 from app.services.document_collection import get_document_collection_status
 from app.services.document_processing.taxonomy import CLIENT_REQUIREMENTS
 from app.services.whatsapp.sessions import verify_dashboard_access
+from app.services.workflow_progress import get_workflow_progress
 
 router = APIRouter(tags=["applications"])
 
@@ -36,10 +37,12 @@ async def document_collection_status(
         ):
             effective_application_id = str(session["session_application_id"])
     collection = await get_document_collection_status(store, effective_application_id)
+    workflow = await get_workflow_progress(store, effective_application_id)
     return {
         **collection,
         "base_application_id": application_id,
         "effective_application_id": effective_application_id,
+        "workflow": workflow,
     }
 
 
@@ -170,21 +173,23 @@ async def dashboard_summary(
         "applications", {"firm_id": user.firm_id, "demo_session_id": None}
     )
     missing = 0
+    workflows: list[dict] = []
     for application in applications:
         requirements = await store.list_rows(
             "document_requirements", {"application_id": application["id"]}
         )
         missing += sum(row.get("status") == "missing" for row in requirements)
+        workflows.append(await get_workflow_progress(store, str(application["id"])))
     return {
         "total_clients": len(clients),
         "active_applications": sum(app.get("status") != "completed" for app in applications),
         "missing_documents": missing,
         "needs_review": sum(
-            app.get("status") in {"extraction_review", "validation_review", "reconciliation_review"}
-            for app in applications
+            not workflow["readiness"]["ready_for_filing"]
+            and workflow["current_stage"] in {"extraction_review", "validation_review"}
+            for workflow in workflows
         ),
         "ready_for_filing": sum(
-            app.get("status") in {"ready_for_ca_review", "approved", "ready_for_filing"}
-            for app in applications
+            workflow["readiness"]["ready_for_filing"] for workflow in workflows
         ),
     }

@@ -53,6 +53,7 @@ from app.services.secure_upload import (
 from app.services.secure_upload import (
     public_upload_context as build_public_upload_context,
 )
+from app.services.validation_workflow import advance_after_extraction_review
 
 router = APIRouter(tags=["documents"])
 
@@ -369,6 +370,16 @@ async def bulk_review_extractions(
     now = datetime.now(UTC).isoformat()
     review_status = "approved" if payload.action == "approve" else "rejected"
     typed_records = [record for record in records if record is not None]
+    if any(
+        record.get("review_status") != "pending"
+        or record.get("source_type") in {"gstr2b", "developer_ground_truth"}
+        or record.get("document_type") == "developer_ground_truth"
+        for record in typed_records
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Only pending client extraction records are eligible for bulk review",
+        )
     for record in typed_records:
         await store.update_row(
             "invoice_records",
@@ -387,9 +398,13 @@ async def bulk_review_extractions(
         extraction_rows = await store.list_rows(
             "document_extractions", {"document_id": document_id}, limit=1
         )
-        if payload.action == "approve" and document_records and all(
-            row.get("review_status") in {"approved", "edited_and_approved"}
-            for row in document_records
+        if (
+            payload.action == "approve"
+            and document_records
+            and all(
+                row.get("review_status") in {"approved", "edited_and_approved"}
+                for row in document_records
+            )
         ):
             if extraction_rows:
                 await store.update_row(
@@ -423,17 +438,27 @@ async def bulk_review_extractions(
         store,
         firm_id=user.firm_id,
         user_id=user.user_id,
-        action=f"extraction.bulk_{payload.action}",
+        action="bulk_document_review",
         entity_type="application",
         entity_id=application_id,
         client_id=application["client_id"],
         application_id=application_id,
-        metadata={"record_count": len(typed_records), "document_count": len(document_ids)},
+        metadata={
+            "record_count": len(typed_records),
+            "document_count": len(document_ids),
+            "action": payload.action,
+        },
+    )
+    workflow = await advance_after_extraction_review(
+        store,
+        application_id=application_id,
+        firm_id=user.firm_id,
     )
     return {
         "action": payload.action,
         "updated_count": len(typed_records),
         "document_count": len(document_ids),
+        "workflow": workflow.as_dict(),
     }
 
 
@@ -590,6 +615,11 @@ async def update_extraction(
     )
     await store.update_row("documents", document_id, {"processing_status": "approved"})
     background_tasks.add_task(index_document, store, settings, document_id)
+    workflow = await advance_after_extraction_review(
+        store,
+        application_id=str(document["application_id"]),
+        firm_id=user.firm_id,
+    )
     await record_audit(
         store,
         firm_id=user.firm_id,
@@ -603,7 +633,7 @@ async def update_extraction(
         after_data=payload.structured_data,
     )
     assert updated is not None
-    return updated
+    return {**updated, "workflow": workflow.as_dict()}
 
 
 @router.post("/documents/{document_id}/approve")
@@ -615,7 +645,7 @@ async def approve_extraction(
     store: Annotated[DataStore, Depends(get_store)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict:
-    await require_firm_row(store, "documents", document_id, user.firm_id)
+    document = await require_firm_row(store, "documents", document_id, user.firm_id)
     rows = await store.list_rows("document_extractions", {"document_id": document_id}, limit=1)
     if not rows:
         raise HTTPException(status_code=404, detail="Extraction not found")
@@ -629,10 +659,28 @@ async def approve_extraction(
             "review_notes": payload.notes,
         },
     )
+    now = datetime.now(UTC).isoformat()
+    records = await store.list_rows("invoice_records", {"document_id": document_id})
+    for record in records:
+        await store.update_row(
+            "invoice_records",
+            record["id"],
+            {
+                "review_status": "approved",
+                "reviewed_by": user.user_id,
+                "reviewed_at": now,
+                "review_notes": payload.notes,
+            },
+        )
     await store.update_row("documents", document_id, {"processing_status": "approved"})
     background_tasks.add_task(index_document, store, settings, document_id)
+    workflow = await advance_after_extraction_review(
+        store,
+        application_id=str(document["application_id"]),
+        firm_id=user.firm_id,
+    )
     assert updated is not None
-    return updated
+    return {**updated, "workflow": workflow.as_dict()}
 
 
 @router.post("/documents/{document_id}/reject")
@@ -643,7 +691,7 @@ async def reject_extraction(
     user: Annotated[UserContext, Depends(require_roles("firm_admin", "reviewer"))],
     store: Annotated[DataStore, Depends(get_store)],
 ) -> dict:
-    await require_firm_row(store, "documents", document_id, user.firm_id)
+    document = await require_firm_row(store, "documents", document_id, user.firm_id)
     rows = await store.list_rows("document_extractions", {"document_id": document_id}, limit=1)
     if not rows:
         raise HTTPException(status_code=404, detail="Extraction not found")
@@ -657,10 +705,28 @@ async def reject_extraction(
             "review_notes": payload.notes,
         },
     )
+    now = datetime.now(UTC).isoformat()
+    records = await store.list_rows("invoice_records", {"document_id": document_id})
+    for record in records:
+        await store.update_row(
+            "invoice_records",
+            record["id"],
+            {
+                "review_status": "rejected",
+                "reviewed_by": user.user_id,
+                "reviewed_at": now,
+                "review_notes": payload.notes,
+            },
+        )
     await store.update_row("documents", document_id, {"processing_status": "rejected"})
     background_tasks.add_task(remove_document_chunks, store, document_id)
+    workflow = await advance_after_extraction_review(
+        store,
+        application_id=str(document["application_id"]),
+        firm_id=user.firm_id,
+    )
     assert updated is not None
-    return updated
+    return {**updated, "workflow": workflow.as_dict()}
 
 
 @router.get("/local-files/{bucket}/{path:path}", include_in_schema=False)

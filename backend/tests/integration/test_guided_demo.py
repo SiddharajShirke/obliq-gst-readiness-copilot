@@ -146,6 +146,13 @@ def test_complete_gst_readiness_walkthrough() -> None:
 
     validation = client.post(f"/api/v1/applications/{application_id}/validate", headers=AUTH)
     assert validation.status_code == 200, validation.text
+    for finding in validation.json()["findings"]:
+        resolved = client.post(
+            f"/api/v1/findings/{finding['id']}/resolve",
+            headers=AUTH,
+            json={"status": "accepted"},
+        )
+        assert resolved.status_code == 200, resolved.text
 
     reconciliation = client.post(f"/api/v1/applications/{application_id}/reconcile", headers=AUTH)
     assert reconciliation.status_code == 200, reconciliation.text
@@ -164,7 +171,14 @@ def test_complete_gst_readiness_walkthrough() -> None:
 
     export = client.post(f"/api/v1/applications/{application_id}/export", headers=AUTH)
     assert export.status_code == 200, export.text
-    assert set(export.json()) == {"readiness_pdf", "invoice_csv", "reconciliation_csv"}
+    assert set(export.json()) == {
+        "preparatory_report_pdf",
+        "document_manifest_csv",
+        "normalized_sales_csv",
+        "normalized_purchase_csv",
+        "validation_summary_csv",
+        "export_pack_zip",
+    }
 
     audit = client.get(f"/api/v1/applications/{application_id}/audit", headers=AUTH)
     assert audit.status_code == 200, audit.text
