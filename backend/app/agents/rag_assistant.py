@@ -17,7 +17,7 @@ from app.services.assistant_actions import create_action_proposal
 from app.services.audit import record_audit
 from app.services.llm.providers import complete_groq_json
 from app.services.rag.application_context import load_structured_facts
-from app.services.rag.query_planner import plan_question
+from app.services.rag.query_planner import deterministic_plan, plan_question
 from app.services.rag.retrieval import retrieve_application_documents, retrieve_knowledge
 from app.services.rag.structured_tools import execute_structured_plan
 
@@ -302,7 +302,12 @@ class RAGAssistant:
             intent = "transaction_lookup"
         else:
             intent = "guidance"
-        plan = await plan_question(state["question"], self.settings)
+        fixed_intents = {"scope_refusal", "alert_explanation"}
+        plan = (
+            deterministic_plan(state["question"])
+            if intent in fixed_intents
+            else await plan_question(state["question"], self.settings)
+        )
         dynamic_domains = {
             QueryDomain.TRANSACTIONS,
             QueryDomain.VALIDATION,
@@ -310,9 +315,9 @@ class RAGAssistant:
             QueryDomain.AUDIT,
             QueryDomain.DOCUMENTS,
         }
-        if intent != "scope_refusal" and plan.operation == QueryOperation.PROPOSE_ACTION:
+        if intent not in fixed_intents and plan.operation == QueryOperation.PROPOSE_ACTION:
             intent = "action_proposal"
-        elif intent != "scope_refusal" and (
+        elif intent not in fixed_intents and (
             plan.operation == QueryOperation.CLARIFY
             or plan.domain in dynamic_domains
             or (

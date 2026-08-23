@@ -98,6 +98,17 @@ def deterministic_plan(question: str) -> QueryPlan:
             "for explicit confirmation."
         )
 
+    if (
+        any(phrase in normalized for phrase in ("what does", "what is meant by", "explain what"))
+        and any(term in normalized for term in ("mismatch", "gst", "itc", "rcm"))
+        and "/" not in normalized
+    ):
+        return QueryPlan(
+            domain=QueryDomain.KNOWLEDGE,
+            operation=QueryOperation.EXPLAIN,
+            needs_knowledge=True,
+        )
+
     review_match = re.search(
         r"mark\s+reconciliation\s+item\s+([a-z0-9-]+)\s+as\s+reviewed",
         normalized,
