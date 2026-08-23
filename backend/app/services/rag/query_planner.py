@@ -181,6 +181,17 @@ def deterministic_plan(question: str) -> QueryPlan:
             limit=20,
         )
 
+    if "alert" in normalized:
+        filters = []
+        if "open" in normalized:
+            filters.append(QueryFilter(field="status", value="open"))
+        return QueryPlan(
+            domain=QueryDomain.ALERTS,
+            operation=QueryOperation.LIST,
+            filters=filters,
+            limit=50,
+        )
+
     if any(term in normalized for term in ("gstr-2b", "gstr2b", "reconciliation")):
         filters: list[QueryFilter] = []
         if any(
@@ -285,16 +296,6 @@ def deterministic_plan(question: str) -> QueryPlan:
             limit=1 if is_extreme else 50,
         )
 
-    if "alert" in normalized:
-        filters = []
-        if "open" in normalized:
-            filters.append(QueryFilter(field="status", value="open"))
-        return QueryPlan(
-            domain=QueryDomain.ALERTS,
-            operation=QueryOperation.LIST,
-            filters=filters,
-            limit=50,
-        )
     if any(term in normalized for term in ("validation", "finding", "invalid")):
         filters = []
         if "period" in normalized:

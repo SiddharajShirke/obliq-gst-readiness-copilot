@@ -57,6 +57,13 @@ def test_gstr2b_only_question_routes_to_reconciliation() -> None:
     assert plan.filters[0].value == "gstr2b_only"
 
 
+def test_raised_reconciliation_alerts_question_routes_to_alerts() -> None:
+    plan = deterministic_plan("Which reconciliation findings have been raised as alerts?")
+
+    assert plan.domain == "alerts"
+    assert plan.operation == "list"
+
+
 def test_audit_approval_question_routes_to_audit_events() -> None:
     plan = deterministic_plan("Who approved the latest extraction?")
 

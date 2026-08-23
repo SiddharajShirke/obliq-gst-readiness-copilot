@@ -79,6 +79,41 @@ async def test_transaction_count_is_application_scoped(store: MemoryStore) -> No
 
 
 @pytest.mark.asyncio
+async def test_tax_invoice_filter_excludes_credit_and_debit_notes(
+    store: MemoryStore,
+) -> None:
+    await _record(
+        store,
+        application_id="app-a",
+        invoice_number="TAX-1",
+        invoice_total="1180.00",
+        taxable_value="1000.00",
+    )
+    credit_note = await _record(
+        store,
+        application_id="app-a",
+        invoice_number="CN-1",
+        invoice_total="-118.00",
+        taxable_value="-100.00",
+    )
+    await store.update_row(
+        "invoice_records",
+        credit_note["id"],
+        {"document_type": "Credit Note"},
+    )
+    plan = QueryPlan(
+        domain=QueryDomain.TRANSACTIONS,
+        operation=QueryOperation.COUNT,
+        filters=[QueryFilter(field="record_kind", value="tax_invoice")],
+    )
+
+    result = await execute_structured_plan(store, application_id="app-a", plan=plan)
+
+    assert result.value == 1
+    assert [row["invoice_number"] for row in result.data] == ["TAX-1"]
+
+
+@pytest.mark.asyncio
 async def test_minimum_invoice_uses_decimal_and_returns_source_row(store: MemoryStore) -> None:
     await _record(
         store,

@@ -91,12 +91,11 @@ def _decimal(value: Any) -> Decimal | None:
 
 def _row_value(row: dict[str, Any], field: str) -> Any:
     if field == "record_kind":
-        category = str(row.get("invoice_category") or "")
-        document_type = str(row.get("document_type") or "")
-        if category in {"sales", "purchase"} and document_type not in {
-            "credit_debit_notes",
-            "gst_special_transactions",
-        }:
+        document_type = str(row.get("document_type") or "").strip().lower()
+        normalized_type = document_type.replace("_", " ").replace("-", " ")
+        if "invoice" in normalized_type and not any(
+            note_type in normalized_type for note_type in ("credit note", "debit note")
+        ):
             return "tax_invoice"
         return "other"
     if field == "sgst_utgst":
