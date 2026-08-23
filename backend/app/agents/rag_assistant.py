@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from decimal import Decimal
 from typing import Any, TypedDict
 
 from app.config import Settings
@@ -611,6 +612,17 @@ class RAGAssistant:
             "cess": "cess",
         }.get(metric or "", (metric or "value").replace("_", " "))
 
+    @staticmethod
+    def _sum_metric(rows: list[dict[str, Any]], field: str) -> Decimal:
+        return sum(
+            (
+                Decimal(str(row[field]))
+                for row in rows
+                if row.get(field) not in (None, "")
+            ),
+            Decimal("0"),
+        )
+
     def _structured_answer(self, state: RAGState) -> tuple[str, float]:
         plan = state["query_plan"]
         result = state["structured_result"]
@@ -643,6 +655,34 @@ class RAGAssistant:
                 f"The {label} {self._money_label(plan.metric)} across {result.row_count} "
                 f"matching records is ₹{result.value or 0}."
             ), 1.0
+        if plan.domain == QueryDomain.TRANSACTIONS and plan.operation == QueryOperation.SUMMARIZE:
+            rows = result.data or []
+            taxable = self._sum_metric(rows, "taxable_value")
+            total_tax = self._sum_metric(rows, "total_tax")
+            invoice_total = self._sum_metric(rows, "invoice_total")
+            return (
+                f"The scoped extracted portfolio has {result.row_count} records, taxable "
+                f"value ₹{taxable}, total GST ₹{total_tax}, and total invoice value "
+                f"₹{invoice_total}."
+            ), 1.0
+        if plan.domain == QueryDomain.TRANSACTIONS:
+            if not result.data:
+                return "No matching extracted GST records were found.", 1.0
+            records = [
+                f"{row.get('invoice_number') or row.get('id')} — "
+                f"taxable ₹{row.get('taxable_value')}, "
+                f"GST ₹{row.get('total_tax')}, invoice value ₹{row.get('invoice_total')}"
+                for row in result.data[:20]
+            ]
+            return "The matching extracted records are: " + "; ".join(records) + ".", 1.0
+        if plan.domain == QueryDomain.VALIDATION:
+            if not result.data:
+                return "No matching validation findings were found.", 1.0
+            findings = [
+                f"{row.get('message') or row.get('finding_type')} ({row.get('status')})"
+                for row in result.data[:20]
+            ]
+            return "The matching validation findings are: " + "; ".join(findings) + ".", 1.0
         if plan.domain == QueryDomain.RECONCILIATION:
             if not result.data:
                 return "No matching reconciliation items were found.", 1.0

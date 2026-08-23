@@ -324,7 +324,11 @@ async def _execute(
             document_id,
             {"processing_status": "rejected" if review_status == "rejected" else "approved"},
         )
-        return {"entity_type": "document_extraction", "entity": result}
+        return {
+            "entity_type": "document_extraction",
+            "entity": result,
+            "document_id": document_id,
+        }
 
     if action_type == "mark_validation_reviewed":
         result = await store.update_row(

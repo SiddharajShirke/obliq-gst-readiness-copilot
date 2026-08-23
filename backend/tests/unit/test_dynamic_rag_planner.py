@@ -93,3 +93,22 @@ def test_other_allowed_actions_are_proposals() -> None:
     assert reminder.action_type == "draft_reminder"
     assert approve.action_type == "approve_extraction"
     assert approve.action_parameters == {"document_id": "document-789"}
+
+
+def test_portfolio_validation_and_invoice_lookup_are_structured() -> None:
+    portfolio = deterministic_plan("Summarize the Purchase Register")
+    validation = deterministic_plan("Which records failed period validation?")
+    invoice = deterministic_plan("What is the taxable value for EFI/0826/889?")
+
+    assert portfolio.domain == "transactions"
+    assert portfolio.operation == "summarize"
+    assert any(
+        row.field == "document_type" and row.value == "purchase_register"
+        for row in portfolio.filters
+    )
+    assert validation.domain == "validation"
+    assert any(row.field == "finding_type" and row.value == "period" for row in validation.filters)
+    assert any(
+        row.field == "invoice_number" and row.value == "efi/0826/889"
+        for row in invoice.filters
+    )

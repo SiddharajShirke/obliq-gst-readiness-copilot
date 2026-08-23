@@ -4,9 +4,10 @@ import hashlib
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 
 from app.agents.rag_assistant import RAGAssistant
+from app.api.v1.alerts import generate_and_store_explanation
 from app.config import Settings, get_settings
 from app.dependencies import current_user, require_firm_row, require_roles
 from app.repositories import DataStore, get_store
@@ -22,6 +23,7 @@ from app.services.assistant_actions import (
     cancel_action_proposal,
     confirm_action_proposal,
 )
+from app.services.rag.document_indexing import index_document, remove_document_chunks
 from app.services.rag.ingestion import ingest_bytes, ingest_text
 
 router = APIRouter(tags=["rag"])
@@ -148,6 +150,7 @@ async def assistant_query(
 async def confirm_assistant_action(
     proposal_id: str,
     payload: AssistantActionDecision,
+    background_tasks: BackgroundTasks,
     user: Annotated[UserContext, Depends(current_user)],
     store: Annotated[DataStore, Depends(get_store)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -162,6 +165,25 @@ async def confirm_assistant_action(
             role=user.role,
             conversation_id=str(payload.conversation_id),
         )
+        result = confirmed.get("result") or {}
+        if result.get("entity_type") == "document_extraction" and result.get("document_id"):
+            if confirmed.get("action_type") == "reject_extraction":
+                background_tasks.add_task(
+                    remove_document_chunks, store, result["document_id"]
+                )
+            else:
+                background_tasks.add_task(
+                    index_document, store, settings, result["document_id"]
+                )
+        if result.get("entity_type") == "alert" and (result.get("entity") or {}).get("id"):
+            background_tasks.add_task(
+                generate_and_store_explanation,
+                store,
+                settings,
+                alert_id=result["entity"]["id"],
+                firm_id=user.firm_id,
+                user_id=user.user_id,
+            )
         return _safe_proposal_status(confirmed)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Assistant action proposal not found") from exc

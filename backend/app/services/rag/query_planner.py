@@ -33,6 +33,18 @@ _METRICS = (
     (("cess",), "cess"),
 )
 
+_DOCUMENT_TYPES = (
+    ("purchase & expense invoice", "purchase_expense_invoices"),
+    ("purchase and expense invoice", "purchase_expense_invoices"),
+    ("credit & debit note", "credit_debit_notes"),
+    ("credit and debit note", "credit_debit_notes"),
+    ("special transaction", "gst_special_transactions"),
+    ("purchase register", "purchase_register"),
+    ("sales register", "sales_register"),
+    ("purchase invoice", "purchase_expense_invoices"),
+    ("sales invoice", "sales_invoices"),
+)
+
 
 def _clarification(message: str) -> QueryPlan:
     return QueryPlan(
@@ -171,6 +183,11 @@ def deterministic_plan(question: str) -> QueryPlan:
         "transaction",
         "purchase record",
         "sales record",
+        "purchase register",
+        "sales register",
+        "extracted record",
+        "extracted data",
+        "portfolio",
         "rcm",
         "taxable value",
         "total gst",
@@ -187,6 +204,10 @@ def deterministic_plan(question: str) -> QueryPlan:
         filters = []
         if "tax invoice" in normalized:
             filters.append(QueryFilter(field="record_kind", value="tax_invoice"))
+        for phrase, document_type in _DOCUMENT_TYPES:
+            if phrase in normalized:
+                filters.append(QueryFilter(field="document_type", value=document_type))
+                break
         if "rcm" in normalized:
             filters.append(QueryFilter(field="rcm_flag", value=True))
         if "purchase" in normalized:
@@ -198,6 +219,23 @@ def deterministic_plan(question: str) -> QueryPlan:
         if threshold:
             filters.append(threshold)
 
+        invoice_match = re.search(
+            r"\b([a-z0-9]+(?:[/_-][a-z0-9]+){1,})\b",
+            normalized,
+        )
+        if invoice_match and not any(
+            row.field == "invoice_number" for row in filters
+        ):
+            filters.append(
+                QueryFilter(
+                    field="invoice_number",
+                    operator=FilterOperator.CONTAINS,
+                    value=invoice_match.group(1),
+                )
+            )
+        if "need ca review" in normalized or "needs ca review" in normalized:
+            filters.append(QueryFilter(field="review_status", value="pending"))
+
         if any(phrase in normalized for phrase in ("how many", "count of", "number of")):
             operation = QueryOperation.COUNT
         elif minimum:
@@ -206,6 +244,8 @@ def deterministic_plan(question: str) -> QueryPlan:
             operation = QueryOperation.MAXIMUM
         elif any(phrase in normalized for phrase in ("average", "mean")):
             operation = QueryOperation.AVERAGE
+        elif any(phrase in normalized for phrase in ("summarize", "summary")):
+            operation = QueryOperation.SUMMARIZE
         elif normalized.startswith("sum ") or normalized.startswith("what is the total "):
             operation = QueryOperation.SUM
         else:
@@ -227,9 +267,33 @@ def deterministic_plan(question: str) -> QueryPlan:
         )
 
     if "alert" in normalized:
-        return QueryPlan(domain=QueryDomain.ALERTS, operation=QueryOperation.LIST, limit=50)
+        filters = []
+        if "open" in normalized:
+            filters.append(QueryFilter(field="status", value="open"))
+        return QueryPlan(
+            domain=QueryDomain.ALERTS,
+            operation=QueryOperation.LIST,
+            filters=filters,
+            limit=50,
+        )
     if any(term in normalized for term in ("validation", "finding", "invalid")):
-        return QueryPlan(domain=QueryDomain.VALIDATION, operation=QueryOperation.LIST, limit=50)
+        filters = []
+        if "period" in normalized:
+            filters.append(
+                QueryFilter(
+                    field="finding_type",
+                    operator=FilterOperator.CONTAINS,
+                    value="period",
+                )
+            )
+        if "open" in normalized or "failed" in normalized:
+            filters.append(QueryFilter(field="status", value="open"))
+        return QueryPlan(
+            domain=QueryDomain.VALIDATION,
+            operation=QueryOperation.LIST,
+            filters=filters,
+            limit=50,
+        )
     if any(term in normalized for term in ("missing document", "document checklist", "collection")):
         return QueryPlan(domain=QueryDomain.CHECKLIST, operation=QueryOperation.SUMMARIZE)
 
