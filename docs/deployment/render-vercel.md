@@ -63,12 +63,35 @@ Verify login, application list, secure upload, one extraction, validation, recon
 
 ## E. Render setup
 
+Both Render setup modes are supported. Choose one service, not both.
+
+### Option 1: Blueprint
+
 1. In Render, create a Blueprint from this GitHub repository.
 2. Render reads the root [render.yaml](../../render.yaml).
 3. Confirm service type **Web Service**, runtime **Docker**, branch **main**.
 4. Confirm Dockerfile `./backend/Dockerfile`, context `.`, and health path `/api/v1/health`.
 5. Enter every `sync: false` value in the Render Dashboard.
 6. Do not attach a persistent disk.
+
+### Option 2: Manual Web Service
+
+1. In Render, choose **New -> Web Service** and connect this GitHub repository.
+2. Select branch `main` and runtime **Docker**.
+3. Leave **Root Directory** empty. The Dockerfile copies both `backend/` and
+   `demo_data/` from the repository-root build context.
+4. Set **Dockerfile Path** to `./backend/Dockerfile` and **Docker Build Context**
+   to `.`.
+5. Leave build and start commands empty; the Dockerfile owns both operations.
+6. Set **Health Check Path** to `/api/v1/health` and enable automatic deploys.
+7. Add the complete environment from section F before expecting the service to
+   become healthy. A manually created Web Service does not import `render.yaml`.
+8. Do not attach a persistent disk.
+
+Render can allocate the service URL before all environment values are known. If
+the first start fails, add the missing values in **Environment**, save them, and
+choose **Manual Deploy -> Deploy latest commit**. Never bypass production
+validation and never commit credentials merely to make the first start pass.
 
 The container command is:
 
@@ -253,6 +276,16 @@ Direct WhatsApp attachments are not part of this test.
 
 ## O. Troubleshooting
 
+- **No open ports followed by a `Settings` validation error:** this is not a
+  Docker port problem. FastAPI exited before Uvicorn could bind the Render
+  `PORT`. For a manual Web Service, add every required value from section F in
+  the Render **Environment** page, then redeploy. In particular, the Vonage
+  provider requires `VONAGE_API_KEY`, `VONAGE_API_SECRET`,
+  `VONAGE_SIGNATURE_SECRET`, `VONAGE_WHATSAPP_FROM`,
+  `VONAGE_SANDBOX_JOIN_MESSAGE`, `PUBLIC_BASE_URL`,
+  `WHATSAPP_DEMO_TOKEN_PEPPER`, `WHATSAPP_PHONE_HASH_PEPPER`, and
+  `WHATSAPP_PHONE_ENCRYPTION_KEY`. Reuse the existing encryption key and
+  peppers so retained session data remains readable.
 - **Render fails at startup:** inspect the first Pydantic error; production intentionally rejects MemoryStore, mock AI, debug mode, HTTP public URLs, non-HTTPS CORS, missing Supabase service role, or a non-384 embedding dimension.
 - **Render build is slow:** the image pre-caches the multilingual Sentence Transformer and installs Tesseract. This avoids a first-request model download but increases build time/image size.
 - **Render Free cold start:** the first request may be delayed. Do not add artificial keep-alive infrastructure.
