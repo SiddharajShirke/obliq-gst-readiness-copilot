@@ -317,6 +317,8 @@ class RAGAssistant:
         }
         if intent not in fixed_intents and plan.operation == QueryOperation.PROPOSE_ACTION:
             intent = "action_proposal"
+        elif intent not in fixed_intents and plan.domain == QueryDomain.KNOWLEDGE:
+            intent = "guidance"
         elif intent not in fixed_intents and (
             plan.operation == QueryOperation.CLARIFY
             or plan.domain in dynamic_domains

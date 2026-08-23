@@ -453,6 +453,20 @@ async def test_vague_alert_followup_uses_existing_explanation_without_model_call
 
 
 @pytest.mark.asyncio
+async def test_definitional_gstr2b_question_uses_knowledge_guidance_intent() -> None:
+    from app.agents.rag_assistant import RAGAssistant
+
+    assistant = RAGAssistant(get_store(), get_settings())
+
+    classified = await assistant.classify_question(
+        {"question": "What does a GSTR-2B mismatch mean?"}
+    )
+
+    assert classified["intent"] == "guidance"
+    assert classified["query_plan"].domain == "knowledge"
+
+
+@pytest.mark.asyncio
 async def test_live_guidance_timeout_returns_grounded_evidence_within_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
