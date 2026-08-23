@@ -77,6 +77,53 @@ class _FallbackGraph:
 
 
 class RAGAssistant:
+    _PUBLIC_ROW_FIELDS = frozenset(
+        {
+            "id",
+            "document_id",
+            "document_type",
+            "invoice_category",
+            "supplier_name",
+            "supplier_gstin",
+            "customer_name",
+            "customer_gstin",
+            "invoice_number",
+            "invoice_date",
+            "place_of_supply",
+            "taxable_value",
+            "gst_rate",
+            "igst",
+            "cgst",
+            "sgst",
+            "sgst_utgst",
+            "cess",
+            "total_tax",
+            "invoice_total",
+            "transaction_type",
+            "itc_status",
+            "rcm_flag",
+            "original_document_reference",
+            "source_page",
+            "source_row",
+            "review_status",
+            "finding_type",
+            "severity",
+            "status",
+            "match_status",
+            "differences",
+            "evidence",
+            "special_flags",
+            "alert_type",
+            "title",
+            "message",
+            "action",
+            "entity_type",
+            "entity_id",
+            "actor_id",
+            "created_at",
+        }
+    )
+
     def __init__(self, store: DataStore, settings: Settings) -> None:
         self.store = store
         self.settings = settings
@@ -799,7 +846,8 @@ class RAGAssistant:
         source_types = list(dict.fromkeys(str(row["source_type"]) for row in citations))
         draft_answer = state["draft_answer"]
         confidence = state.get("confidence", 0.7)
-        safe_uncited = any(
+        plan = state.get("query_plan")
+        safe_uncited = bool(plan and plan.operation == QueryOperation.CLARIFY) or any(
             phrase in draft_answer.lower()
             for phrase in (
                 "do not have enough",
@@ -821,6 +869,41 @@ class RAGAssistant:
             "used_application_data": bool(state.get("application_data")),
             "confidence": confidence,
         }
+        result = state.get("structured_result")
+        if result and plan:
+            if plan.operation in {
+                QueryOperation.COUNT,
+                QueryOperation.SUM,
+                QueryOperation.MINIMUM,
+                QueryOperation.MAXIMUM,
+                QueryOperation.AVERAGE,
+            }:
+                answer["calculation"] = {
+                    "operation": plan.operation,
+                    "metric": plan.metric,
+                    "value": result.value,
+                    "record_count": result.row_count,
+                }
+            raw_rows = result.data if isinstance(result.data, list) else []
+            answer["rows"] = [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key in self._PUBLIC_ROW_FIELDS
+                }
+                for row in raw_rows[:50]
+            ]
+            answer["clarification"] = (
+                plan.clarification if plan.operation == QueryOperation.CLARIFY else None
+            )
+            answer["tool_trace"] = [
+                {
+                    "tool": "execute_structured_plan",
+                    "domain": plan.domain,
+                    "operation": plan.operation,
+                    "row_count": result.row_count,
+                }
+            ]
         return {"citations": citations, "source_types": source_types, "answer": answer}
 
     async def audit(self, state: RAGState) -> dict[str, Any]:

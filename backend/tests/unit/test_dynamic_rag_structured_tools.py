@@ -229,5 +229,13 @@ async def test_assistant_answers_dynamic_count_and_minimum_without_generic_snaps
     assert "2" in count_answer["answer"]
     assert "tax invoice" in count_answer["answer"].lower()
     assert "application review snapshot" not in count_answer["answer"].lower()
+    assert count_answer["calculation"] == {
+        "operation": "count",
+        "metric": None,
+        "value": 2,
+        "record_count": 2,
+    }
     assert "DYNAMIC-LOW" in minimum_answer["answer"]
     assert "590.00" in minimum_answer["answer"]
+    assert minimum_answer["calculation"]["operation"] == "minimum"
+    assert minimum_answer["rows"][0]["invoice_number"] == "DYNAMIC-LOW"
