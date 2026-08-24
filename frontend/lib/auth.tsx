@@ -11,8 +11,10 @@ import {
   LEGACY_USER_KEY,
 } from "./auth-session";
 import {
+  buildEmailConfirmationOptions,
   getSupabaseBrowserClient,
   isSupabaseAuthConfigured,
+  resolveAuthConfirmationUrl,
 } from "./supabase";
 import {
   bootstrapAuthenticatedWorkspace,
@@ -29,6 +31,7 @@ type AuthContextValue = {
   login: (email: string, password: string) => Promise<void>;
   loginDemo: (role?: DemoRole) => Promise<void>;
   register: (email: string, password: string, fullName: string) => Promise<string>;
+  resendConfirmation: (email: string) => Promise<void>;
   logout: () => Promise<void>;
 };
 
@@ -141,7 +144,7 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
     const {data, error} = await supabase.auth.signUp({
       email,
       password,
-      options: {data: {full_name: fullName}},
+      options: buildEmailConfirmationOptions(fullName, window.location.origin),
     });
     if (error) throw new Error(error.message);
     if (data.session) {
@@ -150,6 +153,19 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
     return data.session
       ? "Account created. Your OBLIQ workspace is ready."
       : "Account created. Check your email to confirm the address.";
+  }, []);
+
+  const resendConfirmation = useCallback(async (email: string) => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) throw new Error("Supabase Auth is not configured in this environment.");
+    const {error} = await supabase.auth.resend({
+      type: "signup",
+      email,
+      options: {
+        emailRedirectTo: resolveAuthConfirmationUrl({currentOrigin: window.location.origin}),
+      },
+    });
+    if (error) throw new Error(error.message);
   }, []);
 
   const logout = useCallback(async () => {
@@ -161,8 +177,8 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
   }, [router]);
 
   const value = useMemo(
-    () => ({user, loading, demoMode, login, loginDemo, register, logout}),
-    [user, loading, demoMode, login, loginDemo, register, logout],
+    () => ({user, loading, demoMode, login, loginDemo, register, resendConfirmation, logout}),
+    [user, loading, demoMode, login, loginDemo, register, resendConfirmation, logout],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
