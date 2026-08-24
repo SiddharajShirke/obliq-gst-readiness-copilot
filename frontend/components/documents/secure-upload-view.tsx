@@ -1,6 +1,6 @@
 "use client";
 
-import {Archive, Check, FileUp, FolderUp, Send, ShieldCheck} from "lucide-react";
+import {Archive, ArrowRight, Check, FileUp, FolderUp, Send, ShieldCheck} from "lucide-react";
 import {Badge} from "../ui/badge";
 import {Card} from "../ui/card";
 import {formatDate} from "../../lib/format";
@@ -49,6 +49,23 @@ export function SecureUploadView({context, busyRequirementId, transientStates, o
             <strong>Accepted formats:</strong> {displayExtensions(context.allowed_extensions)}<br/>
             <strong>Maximum size:</strong> {context.maximum_size_mb} MB per file
           </div>
+          <section aria-label="Guided Demo upload instructions" className="mt-5 rounded-2xl border border-[var(--obliq-info-border)] bg-[var(--obliq-info-soft)] p-4 sm:p-5">
+            <p className="text-[10px] font-bold tracking-[.13em] text-[var(--obliq-info-ink)]">GUIDED UPLOAD · STEP 3 OF 6</p>
+            <h2 className="mt-2 text-lg font-bold text-[var(--obliq-ink)]">Upload, check, then submit</h2>
+            <p className="mt-2 text-xs leading-5 text-[var(--obliq-muted)]">Storage and extraction are separate actions. Complete them in this order so the Guided Demo advances correctly.</p>
+            <ol className="mt-4 grid gap-3 sm:grid-cols-2">
+              {[
+                ["Upload files", "Use individual uploads, a complete folder, or the supplied ZIP."],
+                ["Check all six categories", "Confirm every required category displays Uploaded."],
+                ["Submit the stored batch", "Press Submit documents for extraction; uploaded files do not process automatically."],
+                ["Return to Overview", "After successful submission, OBLIQ redirects in five seconds. Extraction continues after you return."],
+              ].map(([title, detail], index) => <li key={title} className="flex gap-3 rounded-2xl border border-[var(--obliq-info-border)] bg-[var(--obliq-surface)]/80 p-3">
+                <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--obliq-blue-soft)] text-xs font-bold text-[var(--obliq-info-ink)]">{index + 1}</span>
+                <span><strong className="block text-sm text-[var(--obliq-ink)]">{title}</strong><span className="mt-1 block text-xs leading-5 text-[var(--obliq-muted)]">{detail}</span></span>
+              </li>)}
+            </ol>
+            <div className="mt-4 flex items-start gap-2 rounded-xl bg-[var(--obliq-surface)]/75 p-3 text-xs leading-5 text-[var(--obliq-info-ink)]"><ArrowRight className="mt-0.5 shrink-0" size={15}/><span><strong>Next:</strong> Monitor processing, then review original-versus-extracted records in Documents & Extraction.</span></div>
+          </section>
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
             <label className="obliq-focus flex cursor-pointer items-center gap-3 rounded-2xl border border-[#d8d3ce] bg-white p-4 transition hover:bg-[#f8f7f5]">
               <FolderUp size={20}/>

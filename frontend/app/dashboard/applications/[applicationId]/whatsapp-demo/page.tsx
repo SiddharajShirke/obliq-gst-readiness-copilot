@@ -18,6 +18,7 @@ import {
   loadPendingWhatsAppDraft,
   loadStoredDemoSession,
   removeStoredDemoSession,
+  resolveWhatsAppGuidedDemoStep,
   saveStoredDemoSession,
   savePendingWhatsAppDraft,
   type StoredDemoSession,
@@ -235,12 +236,7 @@ export default function WhatsAppDemoPage() {
       description={`GST Period: ${created.gst_period}`}
       actions={<Link href={`/dashboard/applications/${applicationId}`} className="obliq-focus inline-flex items-center gap-2 rounded-full border border-[var(--obliq-border)] bg-[var(--obliq-surface)] px-5 py-3 text-sm font-semibold"><ArrowLeft size={17}/>GST workspace</Link>}
     />
-    {guidedActive && <GuidedDemoStep instruction={{
-      step: 2,
-      title: "Connect Vonage WhatsApp",
-      explanation: "Scan the Sandbox QR first, then scan the unique OBLIQ START QR and wait for WhatsApp Connected.",
-      why: "The first QR joins Vonage; the second securely binds this judge to the isolated GST workflow.",
-    }} />}
+    {guidedActive && <GuidedDemoStep instruction={resolveWhatsAppGuidedDemoStep(sessionStatus?.status ?? created.status)} />}
     <WhatsAppDemoView created={created} status={sessionStatus} countdown={countdown} busy={busy} onCopy={copy} onRegenerate={regenerate} onCancel={cancel} onReconnect={reconnect}/>
   </>;
 }
