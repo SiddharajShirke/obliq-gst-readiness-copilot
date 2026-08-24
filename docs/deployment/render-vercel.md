@@ -179,7 +179,7 @@ Set these runtime values in Render. Keep secrets out of `render.yaml`.
 3. Keep framework preset **Next.js** and the existing `npm run build`.
 4. Set **Production Branch** to `main`.
 5. Do not configure a custom output directory or static export.
-6. Add the four public variables below to Production (and Preview only when previews are intentionally tested).
+6. Add the five public variables below to Production (and Preview only when previews are intentionally tested).
 
 ## H. Vercel frontend environment
 
@@ -188,6 +188,7 @@ Set these runtime values in Render. Keep secrets out of `render.yaml`.
 | `NEXT_PUBLIC_API_BASE_URL` | Yes | `https://<render-service>.onrender.com/api/v1` |
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Hosted Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase browser-safe anon key |
+| `NEXT_PUBLIC_SITE_URL` | Yes | Stable Vercel production origin used by email confirmation callbacks |
 | `NEXT_PUBLIC_DEMO_MODE` | Yes | `false` |
 
 Never add the Supabase service role, Groq/NVIDIA/Vonage secrets, Fernet key, or HMAC peppers to Vercel.
@@ -210,6 +211,7 @@ Never add the Supabase service role, Groq/NVIDIA/Vonage secrets, Fernet key, or 
 | `NEXT_PUBLIC_API_BASE_URL` | — | — | Local API `/api/v1` | Render API `/api/v1` | Public | Central frontend API base |
 | `NEXT_PUBLIC_SUPABASE_URL` | — | — | Hosted URL | Hosted URL | Public | Browser Auth endpoint |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | — | — | Anon key | Anon key | Public | Browser Auth |
+| `NEXT_PUBLIC_SITE_URL` | — | — | `http://localhost:3000` | Stable Vercel production origin | Public | Email confirmation callback origin |
 | `NEXT_PUBLIC_DEMO_MODE` | — | — | `false` | `false` | Public | Disables MemoryStore token UI |
 
 All other backend-only values use the exact names in section F and never move into `NEXT_PUBLIC_*`.
@@ -227,9 +229,11 @@ Apply only reviewed forward migrations with `supabase db push --linked`. Never r
 
 In **Authentication → URL Configuration**:
 
-- Site URL: stable Vercel production URL.
-- Redirect URLs: stable Vercel production URL and the existing localhost URLs.
+- Site URL: `https://obliq-gst-readiness-copilot.vercel.app` (the stable Vercel production URL).
+- Redirect URLs: add `https://obliq-gst-readiness-copilot.vercel.app/auth/confirm` and `http://localhost:3000/auth/confirm`.
 - Add a Vercel preview wildcard only if preview authentication is intentionally enabled.
+
+OBLIQ supplies `emailRedirectTo=<current-site>/auth/confirm` on signup and resend. If the Supabase **Confirm signup** email template was customized, keep `{{ .ConfirmationURL }}` as its link target (or construct the link with `{{ .RedirectTo }}`); a template hard-coded to `{{ .SiteURL }}` can ignore the application callback.
 
 ## K. Vonage Sandbox webhook update
 
