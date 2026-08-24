@@ -1,6 +1,26 @@
 export const LEGACY_ACCESS_TOKEN_KEY = "obliq_access_token";
 export const LEGACY_USER_KEY = "obliq_user";
 
+export type RegistrationResult = {
+  authenticated: boolean;
+  destination: "/dashboard" | null;
+  message: string;
+};
+
+export function buildRegistrationResult(authenticated: boolean): RegistrationResult {
+  return authenticated
+    ? {
+        authenticated: true,
+        destination: "/dashboard",
+        message: "Account created. Your secure OBLIQ workspace is being prepared.",
+      }
+    : {
+        authenticated: false,
+        destination: null,
+        message: "Account created. Check your email to confirm the address.",
+      };
+}
+
 type StorageLike = Pick<Storage, "getItem" | "removeItem">;
 
 const DEMO_TOKENS = new Set([

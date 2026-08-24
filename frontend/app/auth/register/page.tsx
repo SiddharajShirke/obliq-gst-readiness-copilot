@@ -1,9 +1,64 @@
 "use client";
-import Link from "next/link";
-import { FormEvent, useState } from "react";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Field, Input } from "@/components/ui/field";
-import { useAuth } from "@/lib/auth";
 
-export default function RegisterPage(){const {register}=useAuth();const [fullName,setFullName]=useState("");const [email,setEmail]=useState("");const [password,setPassword]=useState("");const [busy,setBusy]=useState(false);async function submit(e:FormEvent){e.preventDefault();setBusy(true);try{toast.success(await register(email,password,fullName));}catch(error){toast.error(error instanceof Error?error.message:"Registration failed");}finally{setBusy(false)}}return <main className="grid min-h-screen place-items-center bg-[#e8f1fa] p-4"><div className="w-full max-w-lg rounded-[30px] border border-white bg-white p-7 shadow-[0_25px_70px_rgba(25,21,21,.10)] sm:p-10"><Link href="/" className="text-xl font-black tracking-[-.06em]">OBLIQ</Link><p className="mt-10 text-xs font-bold tracking-[.14em] text-[#477ca8]">CA FIRM ACCESS</p><h1 className="mt-3 text-4xl font-bold tracking-[-.045em]">Create your account.</h1><p className="mt-3 text-sm leading-6 text-[#6b6562]">Supabase handles email/password authentication. A firm admin must add new users to a firm before they can access client data.</p><form className="mt-8 grid gap-5" onSubmit={submit}><Field label="Full name"><Input value={fullName} onChange={e=>setFullName(e.target.value)} required/></Field><Field label="Email"><Input value={email} onChange={e=>setEmail(e.target.value)} type="email" required/></Field><Field label="Password" hint="Use at least eight characters."><Input value={password} onChange={e=>setPassword(e.target.value)} type="password" minLength={8} required/></Field><Button disabled={busy}>{busy?"Creating account…":"Create account"}</Button></form><p className="mt-7 text-center text-sm text-[#6b6562]">Already have access? <Link href="/auth/login" className="font-semibold text-[#191515]">Sign in</Link></p><p className="mt-3 text-center text-xs text-[#77716e]"><Link href="/auth/confirm" className="font-semibold text-[#191515]">Need a new confirmation email?</Link></p></div></main>}
+import Link from "next/link";
+import {useRouter} from "next/navigation";
+import {FormEvent, useState} from "react";
+import {toast} from "sonner";
+
+import {Button} from "@/components/ui/button";
+import {Field, Input} from "@/components/ui/field";
+import {useAuth} from "@/lib/auth";
+
+export default function RegisterPage() {
+  const {register} = useAuth();
+  const router = useRouter();
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      const result = await register(email, password, fullName);
+      toast.success(result.message);
+      if (result.destination) {
+        router.replace(result.destination);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Registration failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="grid min-h-screen place-items-center bg-[#e8f1fa] p-4">
+      <div className="w-full max-w-lg rounded-[30px] border border-white bg-white p-7 shadow-[0_25px_70px_rgba(25,21,21,.10)] sm:p-10">
+        <Link href="/" className="text-xl font-black tracking-[-.06em]">OBLIQ</Link>
+        <p className="mt-10 text-xs font-bold tracking-[.14em] text-[#477ca8]">CA FIRM ACCESS</p>
+        <h1 className="mt-3 text-4xl font-bold tracking-[-.045em]">Create your account.</h1>
+        <p className="mt-3 text-sm leading-6 text-[#6b6562]">
+          Create a secure CA workspace with one Guided Demo profile. You can add any number of client profiles afterward.
+        </p>
+        <form className="mt-8 grid gap-5" onSubmit={submit}>
+          <Field label="Full name">
+            <Input value={fullName} onChange={(event) => setFullName(event.target.value)} required/>
+          </Field>
+          <Field label="Email">
+            <Input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required/>
+          </Field>
+          <Field label="Password" hint="Use at least eight characters.">
+            <Input value={password} onChange={(event) => setPassword(event.target.value)} type="password" minLength={8} required/>
+          </Field>
+          <Button disabled={busy}>{busy ? "Creating account…" : "Create account"}</Button>
+        </form>
+        <p className="mt-7 text-center text-sm text-[#6b6562]">
+          Already have access?{" "}
+          <Link href="/auth/login" className="font-semibold text-[#191515]">Sign in</Link>
+        </p>
+      </div>
+    </main>
+  );
+}
