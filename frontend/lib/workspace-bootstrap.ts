@@ -37,3 +37,22 @@ export async function tryBootstrapAuthenticatedWorkspace(
     return null;
   }
 }
+
+type WorkspaceBootstrapQueueOptions = {
+  request?: typeof fetch;
+  onReady?: (workspace: WorkspaceBootstrap) => void;
+  onError?: (error: Error) => void;
+};
+
+export function queueWorkspaceBootstrap(
+  accessToken: string,
+  {
+    request = fetch,
+    onReady = () => undefined,
+    onError = () => undefined,
+  }: WorkspaceBootstrapQueueOptions = {},
+): void {
+  void bootstrapAuthenticatedWorkspace(accessToken, request)
+    .then(onReady)
+    .catch(cause => onError(cause instanceof Error ? cause : new Error("Workspace setup failed")));
+}

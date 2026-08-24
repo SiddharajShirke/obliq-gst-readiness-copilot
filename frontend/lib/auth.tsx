@@ -1,6 +1,6 @@
 "use client";
 
-import {createContext, useCallback, useContext, useEffect, useMemo, useState} from "react";
+import {createContext, useCallback, useContext, useEffect, useMemo, useRef, useState} from "react";
 import {useRouter} from "next/navigation";
 import type {Session} from "@supabase/supabase-js";
 
@@ -16,22 +16,23 @@ import {
   isSupabaseAuthConfigured,
   resolveAuthConfirmationUrl,
 } from "./supabase";
-import {
-  bootstrapAuthenticatedWorkspace,
-  tryBootstrapAuthenticatedWorkspace,
-} from "./workspace-bootstrap";
+import {queueWorkspaceBootstrap} from "./workspace-bootstrap";
 
 export type AuthUser = {email: string; name?: string; role?: string};
 type DemoRole = "admin" | "preparer" | "reviewer";
+export type WorkspaceStatus = "idle" | "preparing" | "ready" | "error";
 
 type AuthContextValue = {
   user: AuthUser | null;
   loading: boolean;
+  workspaceStatus: WorkspaceStatus;
+  workspaceError: string | null;
   demoMode: boolean;
   login: (email: string, password: string) => Promise<void>;
   loginDemo: (role?: DemoRole) => Promise<void>;
   register: (email: string, password: string, fullName: string) => Promise<string>;
   resendConfirmation: (email: string) => Promise<void>;
+  retryWorkspaceBootstrap: () => void;
   logout: () => Promise<void>;
 };
 
@@ -54,16 +55,62 @@ function sessionUser(session: Session | null): AuthUser | null {
 export function AuthProvider({children}: {children: React.ReactNode}) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [workspaceStatus, setWorkspaceStatus] = useState<WorkspaceStatus>("idle");
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const activeSessionRef = useRef<Session | null>(null);
+  const bootstrapUserRef = useRef<string | null>(null);
+  const readyUserRef = useRef<string | null>(null);
   const router = useRouter();
   const demoMode = isMemoryDemoAuthEnabled(
     process.env.NEXT_PUBLIC_DEMO_MODE,
     isSupabaseAuthConfigured(),
   );
 
+  const prepareWorkspace = useCallback((session: Session | null, force = false) => {
+    activeSessionRef.current = session;
+    if (!session) {
+      bootstrapUserRef.current = null;
+      readyUserRef.current = null;
+      setWorkspaceStatus("idle");
+      setWorkspaceError(null);
+      return;
+    }
+
+    const userId = session.user.id;
+    if (!force && readyUserRef.current === userId) {
+      setWorkspaceStatus("ready");
+      return;
+    }
+    if (bootstrapUserRef.current === userId) return;
+
+    bootstrapUserRef.current = userId;
+    setWorkspaceStatus("preparing");
+    setWorkspaceError(null);
+    queueWorkspaceBootstrap(session.access_token, {
+      onReady: () => {
+        if (activeSessionRef.current?.user.id !== userId) return;
+        bootstrapUserRef.current = null;
+        readyUserRef.current = userId;
+        setWorkspaceStatus("ready");
+      },
+      onError: error => {
+        if (activeSessionRef.current?.user.id !== userId) return;
+        bootstrapUserRef.current = null;
+        setWorkspaceStatus("error");
+        setWorkspaceError(error.message);
+      },
+    });
+  }, []);
+
+  const retryWorkspaceBootstrap = useCallback(() => {
+    if (activeSessionRef.current) prepareWorkspace(activeSessionRef.current, true);
+  }, [prepareWorkspace]);
+
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
     const invalidate = () => {
       setUser(null);
+      prepareWorkspace(null);
       router.replace("/auth/login");
     };
     window.addEventListener("obliq:auth-invalid", invalidate);
@@ -71,21 +118,18 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
     if (supabase) {
       clearLegacyAuthState(window.localStorage);
       void supabase.auth.getSession()
-        .then(async ({data}) => {
-          if (data.session) {
-            await tryBootstrapAuthenticatedWorkspace(data.session.access_token);
-          }
+        .then(({data}) => {
           setUser(sessionUser(data.session));
+          prepareWorkspace(data.session);
         })
-        .catch(() => setUser(null))
+        .catch(() => {
+          setUser(null);
+          prepareWorkspace(null);
+        })
         .finally(() => setLoading(false));
       const {data: listener} = supabase.auth.onAuthStateChange((_event, session) => {
-        void (async () => {
-          if (session) {
-            await tryBootstrapAuthenticatedWorkspace(session.access_token);
-          }
-          setUser(sessionUser(session));
-        })().catch(() => setUser(null));
+        setUser(sessionUser(session));
+        prepareWorkspace(session);
       });
       return () => {
         listener.subscription.unsubscribe();
@@ -109,10 +153,11 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
     }
     queueMicrotask(() => {
       setUser(restoredUser);
+      setWorkspaceStatus(restoredUser ? "ready" : "idle");
       setLoading(false);
     });
     return () => window.removeEventListener("obliq:auth-invalid", invalidate);
-  }, [demoMode, router]);
+  }, [demoMode, prepareWorkspace, router]);
 
   const login = useCallback(async (email: string, password: string) => {
     const supabase = getSupabaseBrowserClient();
@@ -120,9 +165,9 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
     clearLegacyAuthState(window.localStorage);
     const {data, error} = await supabase.auth.signInWithPassword({email, password});
     if (error || !data.session) throw new Error(error?.message || "Login failed");
-    await bootstrapAuthenticatedWorkspace(data.session.access_token);
     setUser(sessionUser(data.session));
-  }, []);
+    prepareWorkspace(data.session);
+  }, [prepareWorkspace]);
 
   const loginDemo = useCallback(async (role: DemoRole = "admin") => {
     if (!demoMode) {
@@ -136,6 +181,7 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
     window.localStorage.setItem(LEGACY_ACCESS_TOKEN_KEY, demoTokens[role]);
     window.localStorage.setItem(LEGACY_USER_KEY, JSON.stringify(authUser));
     setUser(authUser);
+    setWorkspaceStatus("ready");
   }, [demoMode]);
 
   const register = useCallback(async (email: string, password: string, fullName: string) => {
@@ -148,12 +194,13 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
     });
     if (error) throw new Error(error.message);
     if (data.session) {
-      await bootstrapAuthenticatedWorkspace(data.session.access_token);
+      setUser(sessionUser(data.session));
+      prepareWorkspace(data.session);
     }
     return data.session
-      ? "Account created. Your OBLIQ workspace is ready."
+      ? "Account created. Your secure OBLIQ workspace is being prepared."
       : "Account created. Check your email to confirm the address.";
-  }, []);
+  }, [prepareWorkspace]);
 
   const resendConfirmation = useCallback(async (email: string) => {
     const supabase = getSupabaseBrowserClient();
@@ -173,12 +220,37 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
     if (supabase) await supabase.auth.signOut();
     clearLegacyAuthState(window.localStorage);
     setUser(null);
+    prepareWorkspace(null);
     router.push("/");
-  }, [router]);
+  }, [prepareWorkspace, router]);
 
   const value = useMemo(
-    () => ({user, loading, demoMode, login, loginDemo, register, resendConfirmation, logout}),
-    [user, loading, demoMode, login, loginDemo, register, resendConfirmation, logout],
+    () => ({
+      user,
+      loading,
+      workspaceStatus,
+      workspaceError,
+      demoMode,
+      login,
+      loginDemo,
+      register,
+      resendConfirmation,
+      retryWorkspaceBootstrap,
+      logout,
+    }),
+    [
+      user,
+      loading,
+      workspaceStatus,
+      workspaceError,
+      demoMode,
+      login,
+      loginDemo,
+      register,
+      resendConfirmation,
+      retryWorkspaceBootstrap,
+      logout,
+    ],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

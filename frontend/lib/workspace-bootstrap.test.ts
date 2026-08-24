@@ -43,4 +43,29 @@ describe("workspace bootstrap", () => {
 
     await expect(attempt("access-token", request)).resolves.toBeNull();
   });
+
+  it("queues workspace preparation without blocking an authenticated session", () => {
+    const queue = (workspaceBootstrap as typeof workspaceBootstrap & {
+      queueWorkspaceBootstrap?: (
+        accessToken: string,
+        options: {
+          request: typeof fetch;
+          onReady: () => void;
+          onError: (error: Error) => void;
+        },
+      ) => void;
+    }).queueWorkspaceBootstrap;
+    expect(queue).toBeTypeOf("function");
+    if (!queue) return;
+
+    const request = vi.fn(() => new Promise<Response>(() => undefined));
+    const result = queue("access-token", {
+      request,
+      onReady: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    expect(result).toBeUndefined();
+    expect(request).toHaveBeenCalledOnce();
+  });
 });

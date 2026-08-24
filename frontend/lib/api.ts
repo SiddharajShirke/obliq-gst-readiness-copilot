@@ -5,7 +5,14 @@ import {
 } from "./auth-session";
 import {getSupabaseBrowserClient} from "./supabase";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api/v1";
+const DEFAULT_API_BASE = "http://localhost:8000/api/v1";
+
+export function resolveApiBaseUrl(configured = process.env.NEXT_PUBLIC_API_BASE_URL): string {
+  const base = configured?.trim().replace(/\/+$/, "") || DEFAULT_API_BASE;
+  return /\/api\/v1$/i.test(base) ? base : `${base}/api/v1`;
+}
+
+const API_BASE = resolveApiBaseUrl();
 
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number) {
