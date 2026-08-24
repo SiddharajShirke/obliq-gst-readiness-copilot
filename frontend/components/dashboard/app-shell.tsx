@@ -27,11 +27,35 @@ function SidebarContent({ close }: { close?: () => void }) {
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const {
+    user,
+    loading,
+    workspaceStatus,
+    workspaceError,
+    retryWorkspaceBootstrap,
+    logout,
+  } = useAuth();
   const router = useRouter();
   const [open,setOpen]=useState(false);
   useEffect(()=>{if(!loading&&!user) router.replace("/auth/login");},[loading,user,router]);
   if (loading || !user) return <Loading label="Opening your OBLIQ workspace…"/>;
+  if (workspaceStatus === "preparing" || workspaceStatus === "idle") {
+    return <Loading label="Preparing your secure workspace. Render may need a moment to wake…"/>;
+  }
+  if (workspaceStatus === "error") {
+    return <main className="grid min-h-screen place-items-center bg-[var(--obliq-canvas)] p-4 text-[var(--obliq-ink)]">
+      <section className="w-full max-w-lg rounded-[28px] border border-[var(--obliq-border)] bg-[var(--obliq-surface)] p-7 text-center shadow-xl">
+        <p className="text-xs font-bold tracking-[.14em] text-[var(--obliq-warning-ink)]">WORKSPACE CONNECTION</p>
+        <h1 className="mt-3 text-3xl font-bold">Your account is signed in.</h1>
+        <p className="mt-3 text-sm leading-6 text-[var(--obliq-muted)]">The backend could not finish preparing the workspace. Your Supabase session is preserved; retry after Render is available.</p>
+        {workspaceError && <p className="mt-4 rounded-2xl bg-[var(--obliq-danger-soft)] p-3 text-xs text-[var(--obliq-danger-ink)]">{workspaceError}</p>}
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <button onClick={retryWorkspaceBootstrap} className="obliq-focus rounded-full bg-[var(--obliq-action)] px-5 py-3 text-sm font-semibold text-[var(--obliq-action-ink)]">Retry workspace</button>
+          <button onClick={logout} className="obliq-focus rounded-full border border-[var(--obliq-border)] px-5 py-3 text-sm font-semibold">Log out</button>
+        </div>
+      </section>
+    </main>;
+  }
   return <div className="min-h-screen bg-[var(--obliq-canvas)] text-[var(--obliq-ink)] lg:grid lg:grid-cols-[248px_1fr]">
     <aside className="fixed inset-y-0 left-0 hidden w-[248px] border-r border-[var(--obliq-border)] bg-[var(--obliq-surface)] lg:block"><SidebarContent/></aside>
     {open && <div className="fixed inset-0 z-50 bg-black/50 lg:hidden" onClick={()=>setOpen(false)}><aside onClick={(event)=>event.stopPropagation()} className="h-full w-[280px] bg-[var(--obliq-surface)]"><SidebarContent close={()=>setOpen(false)}/></aside></div>}
