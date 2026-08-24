@@ -5,10 +5,12 @@ import {useRouter} from "next/navigation";
 import type {Session} from "@supabase/supabase-js";
 
 import {
+  buildRegistrationResult,
   clearLegacyAuthState,
   isMemoryDemoAuthEnabled,
   LEGACY_ACCESS_TOKEN_KEY,
   LEGACY_USER_KEY,
+  type RegistrationResult,
 } from "./auth-session";
 import {
   buildEmailConfirmationOptions,
@@ -30,7 +32,7 @@ type AuthContextValue = {
   demoMode: boolean;
   login: (email: string, password: string) => Promise<void>;
   loginDemo: (role?: DemoRole) => Promise<void>;
-  register: (email: string, password: string, fullName: string) => Promise<string>;
+  register: (email: string, password: string, fullName: string) => Promise<RegistrationResult>;
   resendConfirmation: (email: string) => Promise<void>;
   retryWorkspaceBootstrap: () => void;
   logout: () => Promise<void>;
@@ -197,9 +199,7 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
       setUser(sessionUser(data.session));
       prepareWorkspace(data.session);
     }
-    return data.session
-      ? "Account created. Your secure OBLIQ workspace is being prepared."
-      : "Account created. Check your email to confirm the address.";
+    return buildRegistrationResult(Boolean(data.session));
   }, [prepareWorkspace]);
 
   const resendConfirmation = useCallback(async (email: string) => {
