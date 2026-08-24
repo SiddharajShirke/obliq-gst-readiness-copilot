@@ -8,6 +8,9 @@ GST Co-Pilot is the OBLIQ hiring prototype: one deeply implemented workflow for 
 
 > **Professional responsibility:** GST Co-Pilot assists with preparation, review, and reconciliation. Final GST filing, ITC treatment, and professional compliance decisions remain with the assigned CA.
 
+> [!IMPORTANT]
+> **REVIEWER ACCOUNT FALLBACK:** If Supabase account creation or confirmation-email limits are reached, use the pre-provisioned reviewer account. Its credentials are available only in the privately shared Environment Setup File; they are intentionally not committed to this public repository.
+
 ## Important Deployment Notice
 
 > [!WARNING]
@@ -129,9 +132,15 @@ flowchart TD
 
 [Open GST Co-Pilot](https://obliq-gst-readiness-copilot.vercel.app/)
 
+> [!IMPORTANT]
+> **UNABLE TO CREATE AN ACCOUNT?** Supabase's built-in authentication email service can temporarily rate-limit confirmation messages. Authorized reviewers may use the pre-provisioned account from the privately shared Environment Setup File instead of waiting for another confirmation email.
+
 The production frontend runs on Vercel. The API is deployed separately on Render.
 
 ## Environment Configuration
+
+> [!IMPORTANT]
+> **PRIVATE REVIEWER ACCESS:** The privately shared Environment Setup File contains the fallback reviewer credentials for use when Supabase account creation or confirmation-email limits are reached. Never copy those credentials into this README, source code, issues, screenshots, or Git commits.
 
 - [Private environment setup file](https://drive.google.com/file/d/1x0dr2MX8kaEDBSUb9Xm7-ifQDXe_qfSc/view?usp=sharing) — download for authorized local testing only.
 - [Repository environment template](.env.example) — contains variable names and safe placeholders only.
