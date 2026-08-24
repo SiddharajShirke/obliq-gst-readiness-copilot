@@ -9,7 +9,10 @@ GST Co-Pilot is the OBLIQ hiring prototype: one deeply implemented workflow for 
 > **Professional responsibility:** GST Co-Pilot assists with preparation, review, and reconciliation. Final GST filing, ITC treatment, and professional compliance decisions remain with the assigned CA.
 
 > [!IMPORTANT]
+
 > **REVIEWER ACCOUNT FALLBACK:** If Supabase account creation or confirmation-email limits are reached, use the pre-provisioned reviewer account. Its credentials are available only in the privately shared Environment Setup File; they are intentionally not committed to this public repository.
+mail :- shirkesiddharaj@gmail.com
+Pas :- Siddharaj123@OBLIQ
 
 ## Important Deployment Notice
 
