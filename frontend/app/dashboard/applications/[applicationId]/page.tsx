@@ -77,6 +77,7 @@ export default function ApplicationWorkspace() {
   const [guidedDismissed, setGuidedDismissed] = useState(false);
   const [showExportGuide, setShowExportGuide] = useState(false);
   const [guidedComplete, setGuidedComplete] = useState(false);
+  const [gstr2bStatus, setGstr2bStatus] = useState<string | null>(null);
 
   const resolveStoredSession = useCallback(() => {
     if (typeof window === "undefined") return null;
@@ -266,16 +267,54 @@ export default function ApplicationWorkspace() {
   const workflow = collection.workflow;
   const extractionStarted = workflow.extraction.record_count > 0;
   const reconciliationStarted = workflow.reconciliation.run_count > 0;
-  const guidedInstruction = resolveGuidedDemoStep({tab, workflow});
+  const guidedInstruction = resolveGuidedDemoStep({
+    tab,
+    workflow,
+    gstr2bStatus,
+    receivedCount: collection.received_count,
+    requiredCount: collection.required_count,
+  });
+
+  function openGuidedTarget(nextTab: Tab, targetId?: string) {
+    setTab(nextTab);
+    if (!targetId || typeof window === "undefined") return;
+    window.setTimeout(() => {
+      document.getElementById(targetId)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }, 75);
+  }
+
   const guidedPrimaryAction = (() => {
-    if (guidedInstruction.step === 1) return {label: "Draft Request", onClick: () => void createDraft("request"), disabled: busy || complete};
-    if (guidedInstruction.step === 3) return {label: "View Checklist", onClick: () => setTab("overview")};
-    if (guidedInstruction.step === 4) return {label: "Review Extractions", onClick: () => setTab("documents")};
-    if (guidedInstruction.step === 5) return {label: "Review Findings", onClick: () => setTab("validation")};
-    if (guidedInstruction.step === 6 && workflow.readiness.ready_for_filing) return {label: "Export Pack", onClick: () => setShowExportGuide(true), disabled: busy};
-    if (guidedInstruction.step === 6) return {label: guidedInstruction.actionLabel, onClick: () => setTab("reconciliation")};
+    switch (guidedInstruction.actionKey) {
+      case "draft_request":
+        return {label: guidedInstruction.actionLabel, onClick: () => void createDraft("request"), disabled: busy || complete};
+      case "view_checklist":
+        return {label: guidedInstruction.actionLabel, onClick: () => openGuidedTarget("overview")};
+      case "view_processing":
+      case "review_extractions":
+        return {label: guidedInstruction.actionLabel, onClick: () => openGuidedTarget("documents")};
+      case "review_validation":
+        return {label: guidedInstruction.actionLabel, onClick: () => openGuidedTarget("validation")};
+      case "export_pack":
+        return {label: guidedInstruction.actionLabel, onClick: () => setShowExportGuide(true), disabled: busy};
+      case "upload_gstr2b":
+        return {label: guidedInstruction.actionLabel, onClick: () => openGuidedTarget("reconciliation", "gstr2b-upload-control")};
+      case "start_reconciliation":
+        return {label: guidedInstruction.actionLabel, onClick: () => openGuidedTarget("reconciliation", "start-reconciliation-control")};
+      case "review_reconciliation":
+        return {label: guidedInstruction.actionLabel, onClick: () => openGuidedTarget("reconciliation", "reconciliation-findings")};
+      case "export_reconciliation":
+        return {label: guidedInstruction.actionLabel, onClick: () => openGuidedTarget("reconciliation", "export-reconciliation-control")};
+    }
     return undefined;
   })();
+  const guidedSecondaryAction = guidedInstruction.actionKey === "export_pack"
+    ? {label: "Review GSTR-2B", onClick: () => openGuidedTarget("reconciliation", "gstr2b-controls")}
+    : guidedInstruction.actionKey?.includes("reconciliation") || guidedInstruction.actionKey === "upload_gstr2b"
+      ? {label: "Main Export Pack", onClick: () => setShowExportGuide(true)}
+      : undefined;
 
   return <>
     <PageHeader
@@ -293,7 +332,7 @@ export default function ApplicationWorkspace() {
     {guidedActive && !guidedDismissed && !guidedComplete && <GuidedDemoStep
       instruction={guidedInstruction}
       primaryAction={guidedPrimaryAction}
-      secondaryAction={guidedInstruction.step === 6 && workflow.readiness.ready_for_filing ? {label: "Review GSTR-2B", onClick: () => setTab("reconciliation")} : undefined}
+      secondaryAction={guidedSecondaryAction}
       onDismiss={() => setGuidedDismissed(true)}
     />}
 
@@ -358,7 +397,7 @@ export default function ApplicationWorkspace() {
 
     {tab === "documents" && <DocumentPanel applicationId={displayApplicationId} checklist={collection.requirements} onChanged={load}/>}
     {tab === "validation" && <FindingsPanel applicationId={displayApplicationId} onChanged={load}/>}
-    {tab === "reconciliation" && <ReconciliationPanel applicationId={displayApplicationId} onChanged={load}/>}
+    {tab === "reconciliation" && <ReconciliationPanel applicationId={displayApplicationId} onChanged={load} onGstr2bStatusChange={setGstr2bStatus}/>}
     {tab === "audit" && <AuditTrailPanel events={audit}/>}
 
     <RagAssistantDrawer

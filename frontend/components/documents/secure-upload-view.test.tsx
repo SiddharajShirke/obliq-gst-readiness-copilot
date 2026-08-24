@@ -57,6 +57,12 @@ describe("secure upload view", () => {
     expect(html).toContain("Upload ZIP Package");
     expect(html).toContain("Submit 1 document for extraction");
     expect(html).toContain("stored securely and will not be processed until you submit");
+    expect(html).toContain("GUIDED UPLOAD · STEP 3 OF 6");
+    expect(html).toContain("Upload files");
+    expect(html).toContain("Check all six categories");
+    expect(html).toContain("Submit the stored batch");
+    expect(html).toContain("Return to Overview");
+    expect(html).toContain("Extraction continues after you return");
     expect(html).not.toContain("Extraction complete");
     expect(html).not.toContain("Ready for CA review");
   });
