@@ -40,6 +40,21 @@ export type WhatsAppDemoStatus = {
     progress_percent: number;
     workflow_status: string;
   };
+  connection_diagnostic?: {
+    state: "awaiting_valid_start" | "connected" | "start_token_expired" | "session_cancelled" | "session_expired";
+    valid_start_received: boolean;
+    waited_seconds: number;
+    session_created_at: string | null;
+    connected_at: string | null;
+    inbound_webhook_url: string;
+    status_callback_url: string;
+  };
+  upload_workflow?: {
+    state: "waiting_for_connection" | "ready_to_prepare_request" | "secure_link_ready" | "secure_link_unavailable" | "documents_received";
+    secure_link_created: boolean;
+    received_document_count: number;
+    latest_link_expires_at: string | null;
+  };
 };
 
 export type StoredDemoSession = {

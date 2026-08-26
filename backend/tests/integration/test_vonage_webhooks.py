@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 from cryptography.fernet import Fernet
@@ -48,10 +50,12 @@ class FakeVonageProvider:
 
 
 @pytest.fixture
-def vonage_client(monkeypatch):
+def vonage_client(monkeypatch, tmp_path):
     settings = Settings(
         app_env="test",
         whatsapp_provider="mock",
+        upload_token_pepper="upload-pepper",
+        local_upload_dir=tmp_path / "uploads",
         whatsapp_demo_token_pepper="token-pepper",
         whatsapp_phone_hash_pepper="phone-pepper",
         whatsapp_phone_encryption_key=Fernet.generate_key().decode(),
@@ -125,6 +129,26 @@ def test_session_api_requires_dashboard_token_and_hides_full_phone(vonage_client
     assert denied.status_code == 403
     assert allowed.status_code == 200
     assert allowed.json()["status"] == "waiting_for_start"
+    diagnostic = allowed.json()["connection_diagnostic"]
+    assert diagnostic.pop("waited_seconds") >= 0
+    assert diagnostic == {
+        "state": "awaiting_valid_start",
+        "valid_start_received": False,
+        "session_created_at": diagnostic["session_created_at"],
+        "connected_at": None,
+        "inbound_webhook_url": (
+            "https://api.example.com/api/v1/webhooks/vonage/whatsapp"
+        ),
+        "status_callback_url": (
+            "https://api.example.com/api/v1/webhooks/vonage/status"
+        ),
+    }
+    assert allowed.json()["upload_workflow"] == {
+        "state": "waiting_for_connection",
+        "secure_link_created": False,
+        "received_document_count": 0,
+        "latest_link_expires_at": None,
+    }
     assert "9876543210" not in allowed.text
     session = asyncio.run(store.get_row("whatsapp_demo_sessions", created["session_id"]))
     normal_applications = client.get("/api/v1/applications", headers=AUTH)
@@ -181,6 +205,98 @@ def test_invalid_signature_changes_nothing_and_valid_start_is_idempotent(
     assert len(outbound) == 1
     assert "/upload/" not in outbound[0]["content"]
     assert str(provider.sent[0]["text"]) == outbound[0]["content"]
+
+
+def test_signed_start_reaches_session_scoped_secure_upload_submission(
+    vonage_client,
+) -> None:
+    client, store, _ = vonage_client
+    pending = client.post(
+        f"/api/v1/applications/{APP_ID}/document-request/draft", headers=AUTH
+    )
+    assert pending.status_code == 201, pending.text
+    reminder_id = pending.json()["id"]
+    created = _create_session(client)
+    session_id = created["session_id"]
+    access_headers = {
+        **AUTH,
+        "X-OBLIQ-Demo-Session-Id": session_id,
+        "X-OBLIQ-Demo-Access-Token": created["dashboard_access_token"],
+    }
+
+    started = _inbound(
+        client,
+        "10000000-0000-4000-8000-000000000099",
+        created["start_message"],
+    )
+    assert started.status_code == 200, started.text
+    status_response = client.get(
+        f"/api/v1/whatsapp-demo-sessions/{session_id}", headers=access_headers
+    )
+    assert status_response.status_code == 200, status_response.text
+    assert status_response.json()["connection_diagnostic"]["state"] == "connected"
+    assert status_response.json()["connection_diagnostic"]["valid_start_received"] is True
+    assert status_response.json()["upload_workflow"]["state"] == "ready_to_prepare_request"
+
+    prepared = client.post(
+        f"/api/v1/reminders/{reminder_id}/prepare", headers=access_headers
+    )
+    assert prepared.status_code == 200, prepared.text
+    retried_prepare = client.post(
+        f"/api/v1/reminders/{reminder_id}/prepare", headers=access_headers
+    )
+    assert retried_prepare.status_code == 200, retried_prepare.text
+    links_after_retry = asyncio.run(
+        store.list_rows("upload_links", {"demo_session_id": session_id})
+    )
+    assert len([row for row in links_after_retry if not row.get("revoked_at")]) == 1
+    stale_token = Path(urlparse(prepared.json()["upload_url"]).path).name
+    assert client.get(f"/api/v1/public/upload/{stale_token}").status_code == 410
+    upload_url = retried_prepare.json()["upload_url"]
+    token = Path(urlparse(upload_url).path).name
+    public_context = client.get(f"/api/v1/public/upload/{token}")
+    assert public_context.status_code == 200, public_context.text
+    requirement = next(
+        row
+        for row in public_context.json()["checklist"]
+        if row["requirement_type"] == "sales_register"
+    )
+
+    uploaded = client.post(
+        f"/api/v1/public/upload/{token}",
+        data={"requirement_id": requirement["id"]},
+        files={
+            "file": (
+                "Sales_Register_April.csv",
+                b"invoice_number,invoice_date,taxable_value\nS-1,2026-04-02,1000\n",
+                "text/csv",
+            )
+        },
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    submitted = client.post(f"/api/v1/public/upload/{token}/submit")
+    assert submitted.status_code == 202, submitted.text
+
+    session = asyncio.run(store.get_row("whatsapp_demo_sessions", session_id))
+    assert session is not None
+    clone_id = session["session_application_id"]
+    document = asyncio.run(store.get_row("documents", uploaded.json()["id"]))
+    assert document is not None
+    assert document["application_id"] == clone_id
+    assert document["application_id"] != APP_ID
+    batches = asyncio.run(
+        store.list_rows("document_submission_batches", {"application_id": clone_id})
+    )
+    assert len(batches) == 1
+    assert batches[0]["demo_session_id"] == session_id
+
+    final_status = client.get(
+        f"/api/v1/whatsapp-demo-sessions/{session_id}", headers=access_headers
+    )
+    assert final_status.status_code == 200, final_status.text
+    assert final_status.json()["upload_workflow"]["state"] == "documents_received"
+    assert final_status.json()["upload_workflow"]["secure_link_created"] is True
+    assert final_status.json()["upload_workflow"]["received_document_count"] == 1
 
 
 def test_invalid_start_rate_limit_suppresses_outbound_reply(

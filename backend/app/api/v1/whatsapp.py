@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -47,6 +48,7 @@ from app.services.whatsapp.sessions import (
 )
 
 router = APIRouter(tags=["whatsapp"])
+logger = logging.getLogger(__name__)
 START_PATTERN = re.compile(r"^START OBLIQ DEMO ([ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8,10})$", re.I)
 INVALID_SESSION_MESSAGE = (
     "This OBLIQ WhatsApp demo session is invalid or has expired.\n\n"
@@ -86,7 +88,87 @@ def _validate_request(
         raw_body=raw_body,
         authorization=request.headers.get("authorization"),
     ):
+        logger.warning(
+            "Rejected Vonage webhook with an invalid signature path=%s",
+            request.url.path,
+        )
         raise HTTPException(status_code=403, detail="Invalid Vonage webhook signature")
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _connection_diagnostic(settings: Settings, session: dict[str, Any]) -> dict[str, Any]:
+    status_value = str(session.get("status") or "waiting_for_start")
+    valid_start_received = bool(session.get("connected_at")) or status_value in {
+        "active",
+        "completed",
+    }
+    token_expires_at = _parse_timestamp(session.get("token_expires_at"))
+    session_created_at = _parse_timestamp(session.get("created_at"))
+    waited_seconds = (
+        max(0, int((datetime.now(UTC) - session_created_at).total_seconds()))
+        if session_created_at and not valid_start_received
+        else 0
+    )
+    if valid_start_received:
+        state = "connected"
+    elif status_value == "cancelled":
+        state = "session_cancelled"
+    elif status_value == "expired":
+        state = "session_expired"
+    elif token_expires_at and token_expires_at <= datetime.now(UTC):
+        state = "start_token_expired"
+    else:
+        state = "awaiting_valid_start"
+    return {
+        "state": state,
+        "valid_start_received": valid_start_received,
+        "waited_seconds": waited_seconds,
+        "session_created_at": session.get("created_at"),
+        "connected_at": session.get("connected_at"),
+        "inbound_webhook_url": (
+            f"{settings.public_base_url.rstrip('/')}{settings.api_v1_prefix}"
+            "/webhooks/vonage/whatsapp"
+        ),
+        "status_callback_url": _callback_url(settings),
+    }
+
+
+def _upload_workflow_status(
+    session: dict[str, Any],
+    documents: list[dict[str, Any]],
+    latest_link: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if documents:
+        state = "documents_received"
+    elif latest_link:
+        expires_at = _parse_timestamp(latest_link.get("expires_at"))
+        if latest_link.get("revoked_at") or (
+            expires_at and expires_at <= datetime.now(UTC)
+        ):
+            state = "secure_link_unavailable"
+        else:
+            state = "secure_link_ready"
+    elif session.get("status") == "active":
+        state = "ready_to_prepare_request"
+    else:
+        state = "waiting_for_connection"
+    return {
+        "state": state,
+        "secure_link_created": latest_link is not None,
+        "received_document_count": len(documents),
+        "latest_link_expires_at": latest_link.get("expires_at") if latest_link else None,
+    }
 
 
 async def _send_text(
@@ -591,6 +673,21 @@ async def prepare_pending_reminder(
             demo_session=session,
             created_by_user_id=user.user_id,
         )
+        previous_links = await store.list_rows(
+            "upload_links",
+            {"demo_session_id": session_id},
+        )
+        revoked_at = _now()
+        for previous_link in previous_links:
+            if (
+                str(previous_link.get("id")) != upload_link.id
+                and not previous_link.get("revoked_at")
+            ):
+                await store.update_row(
+                    "upload_links",
+                    str(previous_link["id"]),
+                    {"revoked_at": revoked_at},
+                )
     message = build_message(
         {
             "firm_id": user.firm_id,
@@ -743,6 +840,14 @@ async def whatsapp_demo_session_status(
         desc=True,
         limit=1,
     )
+    upload_links = await store.list_rows(
+        "upload_links",
+        {"demo_session_id": session_id},
+        order="created_at",
+        desc=True,
+        limit=1,
+    )
+    latest_upload_link = upload_links[0] if upload_links else None
     masked_phone = None
     if session.get("judge_phone_encrypted"):
         masked_phone = mask_phone(
@@ -779,6 +884,10 @@ async def whatsapp_demo_session_status(
         "session_expires_at": session["expires_at"],
         "last_outbound_delivery_status": (
             outbound[0].get("delivery_status") if outbound else None
+        ),
+        "connection_diagnostic": _connection_diagnostic(settings, session),
+        "upload_workflow": _upload_workflow_status(
+            session, documents, latest_upload_link
         ),
     }
 
@@ -922,6 +1031,10 @@ async def receive_vonage_whatsapp(
             provider_user_id=sender,
         )
         if not session:
+            logger.warning(
+                "Received a validly signed Vonage START command that did not match "
+                "an active single-use session"
+            )
             can_reply = rate_limiter.allow(
                 f"invalid-start:{request.client.host if request.client else 'unknown'}",
                 limit=20,
@@ -958,6 +1071,11 @@ async def receive_vonage_whatsapp(
             client_id=session["base_client_id"],
             application_id=session["session_application_id"],
             demo_session_id=session["id"],
+        )
+        logger.info(
+            "Accepted Vonage START and bound demo_session_id=%s application_id=%s",
+            session["id"],
+            session["session_application_id"],
         )
         welcome = await build_welcome_message(store, session)
         background_tasks.add_task(
