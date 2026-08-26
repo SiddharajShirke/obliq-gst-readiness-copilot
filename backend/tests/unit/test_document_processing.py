@@ -227,3 +227,52 @@ async def test_live_ai_rate_limit_keeps_deterministic_evidence_for_ca_review(
     assert result["task_type"] == "text_parse_ai_unavailable"
     assert result["fallback_reason"] == "groq_RuntimeError"
     assert result["invoice_rows"][0]["document_number"] == "DN-1"
+
+
+@pytest.mark.asyncio
+async def test_scanned_pdf_uses_packaged_ocr_before_deterministic_extraction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.document_processing import processor as processor_module
+
+    class FakeStore:
+        async def get_row(self, table: str, row_id: str) -> dict[str, object] | None:
+            if table == "applications":
+                return {"id": row_id, "period_label": "April 2026"}
+            return None
+
+    calls: list[bytes] = []
+    monkeypatch.setattr(processor_module, "read_pdf_text", lambda _: "")
+
+    def scanned_text(content: bytes, *, tesseract_cmd: str) -> str:
+        calls.append(content)
+        assert tesseract_cmd == ""
+        return "Invoice Number: OCR-1\nTaxable Value: 1000\nInvoice Total: 1180"
+
+    monkeypatch.setattr(processor_module, "read_scanned_pdf_text", scanned_text)
+    monkeypatch.setattr(processor_module, "parse_normalized_pdf_tables", lambda *a, **k: None)
+    settings = Settings(
+        app_env="test",
+        whatsapp_provider="mock",
+        ai_mode="mock",
+        ocr_enabled=True,
+        _env_file=None,
+    )
+    processor = processor_module.DocumentProcessor(FakeStore(), settings)  # type: ignore[arg-type]
+
+    result = await processor.parse_and_extract(
+        {
+            "document": {
+                "id": "scanned-document",
+                "application_id": "application-id",
+                "original_name": "scanned_purchase_invoice.pdf",
+                "mime_type": "application/pdf",
+            },
+            "document_type": "purchase_expense_invoices",
+            "content": b"%PDF scanned image",
+        }
+    )
+
+    assert calls == [b"%PDF scanned image"]
+    assert result["provider"] == "deterministic"
+    assert result["invoice_rows"][0]["document_number"] == "OCR-1"

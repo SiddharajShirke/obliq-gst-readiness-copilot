@@ -26,7 +26,11 @@ from app.schemas.auth import UserContext
 from app.schemas.whatsapp import ReminderApproval
 from app.services.audit import record_audit
 from app.services.document_collection import get_document_collection_status
-from app.services.secure_upload import create_secure_upload_link
+from app.services.secure_upload import (
+    SecureUploadMessageError,
+    create_secure_upload_link,
+    verify_reminder_upload_message,
+)
 from app.services.whatsapp.base import WhatsAppSendError
 from app.services.whatsapp.cleanup import cleanup_demo_sessions
 from app.services.whatsapp.conversation import (
@@ -430,6 +434,28 @@ async def _approve_send(
             detail="Approved message is required for a secure upload link",
         )
     text = message_override or reminder["draft_message"]
+    if reminder["reminder_type"] == "initial_document_request":
+        try:
+            await verify_reminder_upload_message(
+                store,
+                settings,
+                reminder=reminder,
+                session=session,
+                message=text,
+            )
+        except SecureUploadMessageError as exc:
+            logger.warning(
+                "Blocked unsafe secure-upload reminder reminder_id=%s reason=%s",
+                reminder_id,
+                type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Secure upload link is invalid or belongs to another environment. "
+                    "Prepare a new request before sending."
+                ),
+            ) from exc
     persisted_text = redact_upload_token_path(text)
     protector = _protector(settings)
     recipient_value = protector.decrypt(session["judge_phone_encrypted"])

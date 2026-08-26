@@ -22,6 +22,9 @@ Pass :- Siddharaj123@OBLIQ )
 >
 > **For the most reliable complete-workflow evaluation, use the local testing setup described below.**
 
+> [!CAUTION]
+> **ENVIRONMENT ISOLATION IS REQUIRED FOR WHATSAPP AND SECURE UPLOADS. Never run a local backend against the production Supabase/Vonage environment while `FRONTEND_URL` points to localhost. A token is signed by the environment that created it, so changing `http://localhost:3000` to the Vercel hostname does not repair an old link. Discard the affected draft/session and create a new request after the correct environment is deployed. Live Vonage startup now requires a public HTTPS upload origin unless an explicit development-only override is enabled.**
+
 ## Important Local Testing Instruction
 
 > [!IMPORTANT]
@@ -666,6 +669,8 @@ GSTR-2B is a separate government-side input. It is uploaded and parsed in the re
 4. The message contains a secure browser upload link derived from `FRONTEND_URL`.
 5. **Draft Reminder** recalculates currently missing categories at draft time; it does not reuse stale missing-document text.
 
+Immediately before delivery, the backend re-verifies that the message contains exactly one configured-origin upload URL, that its token matches the stored HMAC under the running environment's pepper, and that the link belongs to the same firm, application, client, and Guided Demo session. Any mismatch fails closed before Vonage is called.
+
 Requests and reminders are human-controlled outbound actions. The system does not automatically spam clients.
 
 ### Why two QR codes exist
@@ -685,6 +690,8 @@ Supported text commands use centralized application state: `STATUS`, `HELP`, and
 ### Secure upload design
 
 The upload URL contains a high-entropy token. The database stores only its domain-separated HMAC hash. Resolution verifies expiry/revocation and reconstructs the authorized firm, client, application, optional demo session, and checklist scope on the server.
+
+Upload tokens are environment-bound capabilities. Do not copy their database rows, rewrite their hostnames, or reuse them across local, preview, and production runtimes. If an origin or pepper was wrong, revoke/discard the link and prepare a fresh request in the intended environment.
 
 The upload layer enforces configured extension/MIME/signature checks, file-size limits, safe names, SHA-256 duplicate detection, private Storage paths, and application/session consistency. Clients can use the scoped link without a normal CA dashboard login.
 
@@ -811,7 +818,7 @@ The example model configuration is:
 GROQ_MODEL=openai/gpt-oss-120b
 GROQ_HEAVY_MODEL=openai/gpt-oss-120b
 GROQ_RAG_MODEL=openai/gpt-oss-120b
-NVIDIA_SMALL_MODEL=meta/llama-3.1-8b-instruct
+NVIDIA_SMALL_MODEL=meta/llama-3.2-11b-vision-instruct
 NVIDIA_VISION_MODEL=meta/llama-3.2-11b-vision-instruct
 ```
 
@@ -1351,13 +1358,13 @@ cp frontend/.env.local.example frontend/.env.local
 
 Use `.env.example` only as a template. Put real backend values in the gitignored root `.env`; put only the four browser-safe `NEXT_PUBLIC_*` values in `frontend/.env.local`.
 
-For a real local Supabase-connected run:
+For a safe local run without external WhatsApp delivery:
 
 ```env
 APP_ENV=development
-USE_IN_MEMORY_DB=false
-AI_MODE=live
-WHATSAPP_PROVIDER=vonage
+USE_IN_MEMORY_DB=true
+AI_MODE=mock
+WHATSAPP_PROVIDER=mock
 FRONTEND_URL=http://localhost:3000
 BACKEND_URL=http://localhost:8000
 CORS_ORIGINS=http://localhost:3000
@@ -1365,6 +1372,8 @@ CORS_ORIGINS=http://localhost:3000
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
 NEXT_PUBLIC_DEMO_MODE=false
 ```
+
+For a Supabase-connected workflow, use an isolated non-production Supabase project and follow [Vonage Local Setup](#vonage-local-setup) before enabling `WHATSAPP_PROVIDER=vonage`. Never point a local process at production data or production Vonage credentials.
 
 ### 3. Install backend dependencies
 
@@ -1448,7 +1457,7 @@ The values below are the actual settings consumed by `backend/app/config.py` and
 | `APP_DEBUG` | Yes in prod | Backend | Debug behavior; production requires false | `true` locally | Public config |
 | `DEMO_MODE` | No | Backend | Prototype demo behavior flag | `true` locally | Public config |
 | `USE_IN_MEMORY_DB` | Yes | Backend | Select memory test store vs Supabase; production requires false | `false` | Public config |
-| `FRONTEND_URL` | Yes | Backend | Secure upload-link origin | `http://localhost:3000` | Public config |
+| `FRONTEND_URL` | Yes | Backend | Secure upload-link origin; live Vonage requires public HTTPS by default | `http://localhost:3000` for non-live local use | Public config |
 | `BACKEND_URL` | Recommended | Backend | Canonical backend origin | `http://localhost:8000` | Public config |
 | `PUBLIC_BASE_URL` | Yes | Backend/Vonage | Public webhook origin | current HTTPS tunnel | Public config |
 | `API_V1_PREFIX` | No | Backend | API mount prefix | `/api/v1` | Public config |
@@ -1483,7 +1492,7 @@ The values below are the actual settings consumed by `backend/app/config.py` and
 | `GROQ_RAG_MODEL` | Recommended | Backend | RAG planning/generation model | documented model name | Public config |
 | `NVIDIA_API_KEY` | Yes in live mode | Backend | Hosted NVIDIA authentication | never show | Secret |
 | `NVIDIA_BASE_URL` | Yes | Backend | OpenAI-compatible hosted endpoint | `https://integrate.api.nvidia.com/v1` | Public config |
-| `NVIDIA_SMALL_MODEL` | Yes in live mode | Backend | Routine extraction/explanation model | documented model name | Public config |
+| `NVIDIA_SMALL_MODEL` | Yes in live mode | Backend | Routine extraction/explanation model | `meta/llama-3.2-11b-vision-instruct` | Public config |
 | `NVIDIA_VISION_MODEL` | Optional | Backend | Verified image-capable model | documented vision model | Public config |
 | `EMBEDDING_PROVIDER` | Yes | Backend | `local` Sentence Transformer or test mock | `local` | Public config |
 | `EMBEDDING_MODEL` | Yes | Backend | Embedding model ID | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Public config |
@@ -1530,6 +1539,7 @@ Legacy Gemini/OpenAI adapter fields remain in configuration for compatibility, b
 | Variable | Required? | Used by | Purpose | Safe local example | Visibility |
 |---|---:|---|---|---|---|
 | `WHATSAPP_PROVIDER` | Yes | Backend | Active provider | `vonage` | Public config |
+| `ALLOW_LOCAL_WHATSAPP_LINKS` | Development escape hatch only | Backend | Allows an unsafe local/private upload origin with live Vonage; forbidden in production | `false` | Public config |
 | `VONAGE_API_KEY` | Yes | Backend | Messages API authentication | never show | Secret |
 | `VONAGE_API_SECRET` | Yes | Backend | Messages API authentication | never show | Secret |
 | `VONAGE_SIGNATURE_SECRET` | Yes | Backend | Signed webhook validation | never show | Secret |
@@ -1585,6 +1595,8 @@ For Auth, configure localhost redirects during development and the Vercel produc
 ### 1. Configure the Sandbox values
 
 Set the real backend-only Vonage variables in root `.env`, including API key/secret, signature secret, sender, join message, and all OBLIQ session security values.
+
+Use a dedicated non-production Supabase project, separate peppers, and non-production Vonage credentials. Expose both the frontend upload portal and backend callbacks through stable public HTTPS origins. Set `FRONTEND_URL` to the frontend tunnel and `PUBLIC_BASE_URL` to the backend tunnel. The development-only `ALLOW_LOCAL_WHATSAPP_LINKS=true` escape hatch is intended for controlled same-machine tests and can produce links that a phone cannot open; it is always rejected in production.
 
 Generate independent peppers and a Fernet key:
 
@@ -1789,6 +1801,8 @@ Status:  https://<render-backend>/api/v1/webhooks/vonage/status
 ```
 
 Set backend `PUBLIC_BASE_URL` to the Render origin and `FRONTEND_URL` to the Vercel origin. New secure request links should point to Vercel, not localhost or ngrok.
+
+The deployed health response exposes only safe origin diagnostics. Confirm `live_upload_origin_ready=true` and the expected Vercel `frontend_origin` before starting a judge workflow. If any prior message contains localhost, revoke/discard that draft or session and create a new one after redeployment; hostname replacement cannot make its token valid on Render.
 
 ### Main-branch release flow
 

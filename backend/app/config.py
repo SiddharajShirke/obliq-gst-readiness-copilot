@@ -2,12 +2,79 @@
 
 from __future__ import annotations
 
+import ipaddress
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+
+def normalize_origin(value: str) -> str:
+    """Return a canonical HTTP(S) origin and reject paths or credentials."""
+
+    candidate = value.strip().rstrip("/")
+    parsed = urlsplit(candidate)
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Expected an HTTP(S) origin without a path, query, or credentials")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Origin contains an invalid port") from exc
+    scheme = parsed.scheme.lower()
+    hostname = parsed.hostname.lower()
+    rendered_host = f"[{hostname}]" if ":" in hostname else hostname
+    if port and not ((scheme == "https" and port == 443) or (scheme == "http" and port == 80)):
+        rendered_host = f"{rendered_host}:{port}"
+    return f"{scheme}://{rendered_host}"
+
+
+def is_unsafe_network_host(hostname: str) -> bool:
+    """Identify loopback, private, link-local, and development-only hosts."""
+
+    host = hostname.strip().lower().rstrip(".")
+    if (
+        host == "localhost"
+        or host.endswith(".localhost")
+        or host.endswith(".local")
+        or host in {"host.docker.internal", "0.0.0.0"}
+    ):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return any(
+        (
+            address.is_private,
+            address.is_loopback,
+            address.is_link_local,
+            address.is_reserved,
+            address.is_unspecified,
+            address.is_multicast,
+        )
+    )
+
+
+def is_public_https_origin(value: str) -> bool:
+    try:
+        origin = normalize_origin(value)
+    except ValueError:
+        return False
+    parsed = urlsplit(origin)
+    return parsed.scheme == "https" and bool(
+        parsed.hostname and not is_unsafe_network_host(parsed.hostname)
+    )
 
 
 class Settings(BaseSettings):
@@ -98,6 +165,7 @@ class Settings(BaseSettings):
     whatsapp_demo_token_pepper: str = ""
     whatsapp_phone_hash_pepper: str = ""
     whatsapp_phone_encryption_key: str = ""
+    allow_local_whatsapp_links: bool = False
 
     demo_admin_email: str = "demo.admin@obliq.local"
     demo_admin_password: str = "ChangeMe123!"
@@ -117,7 +185,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_whatsapp_runtime(self) -> Settings:
-        if self.whatsapp_provider == "mock" and self.app_env == "test":
+        safe_local_mock = (
+            self.whatsapp_provider == "mock"
+            and self.app_env.lower() in {"test", "development"}
+            and self.use_in_memory_db
+        )
+        if safe_local_mock:
             return self
         if self.whatsapp_provider != "vonage":
             raise ValueError("WHATSAPP_PROVIDER must be vonage outside automated tests")
@@ -138,6 +211,11 @@ class Settings(BaseSettings):
             raise ValueError("Vonage WhatsApp configuration is incomplete: " + ", ".join(missing))
         if not self.upload_token_pepper:
             raise ValueError("Secure upload configuration is incomplete: UPLOAD_TOKEN_PEPPER")
+        local_override = self.app_env.lower() == "development" and self.allow_local_whatsapp_links
+        if not local_override and not is_public_https_origin(self.frontend_url):
+            raise ValueError(
+                "Live Vonage requires FRONTEND_URL to be a public HTTPS origin"
+            )
         return self
 
     @model_validator(mode="after")
@@ -174,6 +252,8 @@ class Settings(BaseSettings):
             violations.append("SUPABASE_SERVICE_ROLE_KEY")
         if not self.frontend_url.startswith("https://"):
             violations.append("FRONTEND_URL must be an HTTPS origin")
+        elif not is_public_https_origin(self.frontend_url):
+            violations.append("FRONTEND_URL must be a public HTTPS origin")
         if not self.public_base_url.startswith("https://"):
             violations.append("PUBLIC_BASE_URL must be an HTTPS origin")
         if not self.cors_origins or any(
@@ -182,6 +262,8 @@ class Settings(BaseSettings):
             violations.append("CORS_ORIGINS must contain only HTTPS production origins")
         if self.embedding_dimension != 384:
             violations.append("EMBEDDING_DIMENSION=384")
+        if self.allow_local_whatsapp_links:
+            violations.append("ALLOW_LOCAL_WHATSAPP_LINKS=false")
 
         if violations:
             raise ValueError(

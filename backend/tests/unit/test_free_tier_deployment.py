@@ -17,3 +17,12 @@ def test_render_blueprint_uses_one_heavy_processing_slot() -> None:
 
     assert "HEAVY_PROCESSING_CONCURRENCY" in blueprint
     assert 'value: "1"' in blueprint
+
+
+def test_render_blueprint_pins_canonical_public_origins_and_supported_ai_model() -> None:
+    blueprint = (ROOT / "render.yaml").read_text(encoding="utf-8")
+
+    assert "https://obliq-gst-readiness-copilot.vercel.app" in blueprint
+    assert blueprint.count("https://obliq-gst-readiness-copilot.onrender.com") >= 2
+    assert '- key: ALLOW_LOCAL_WHATSAPP_LINKS\n        value: "false"' in blueprint
+    assert "meta/llama-3.2-11b-vision-instruct" in blueprint

@@ -22,5 +22,11 @@ class InProcessRateLimiter:
             events.append(now)
             return True
 
+    def reset(self) -> None:
+        """Clear process-local counters for an isolated runtime or test boundary."""
+
+        with self._lock:
+            self._events.clear()
+
 
 rate_limiter = InProcessRateLimiter()

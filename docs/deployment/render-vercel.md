@@ -28,13 +28,13 @@ Do not use real taxpayer data in this hiring prototype.
 
 ## C. Local environment
 
-Copy `.env.example` to `.env` and `frontend/.env.local.example` to `frontend/.env.local`. Supabase-backed local operation uses:
+Copy `.env.example` to `.env` and `frontend/.env.local.example` to `frontend/.env.local`. Safe local operation defaults to an isolated in-memory mock workflow:
 
 ```env
 APP_ENV=development
-USE_IN_MEMORY_DB=false
-AI_MODE=live
-WHATSAPP_PROVIDER=vonage
+USE_IN_MEMORY_DB=true
+AI_MODE=mock
+WHATSAPP_PROVIDER=mock
 FRONTEND_URL=http://localhost:3000
 BACKEND_URL=http://localhost:8000
 CORS_ORIGINS=http://localhost:3000
@@ -42,7 +42,7 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
 NEXT_PUBLIC_DEMO_MODE=false
 ```
 
-`PUBLIC_BASE_URL` must be the current HTTPS tunnel only while testing local Vonage webhooks. Never copy an ngrok URL to Render.
+Do not combine localhost origins with production Supabase or Vonage credentials. For a live local integration test, use an isolated non-production Supabase project, separate peppers/credentials, and public HTTPS tunnels for both `FRONTEND_URL` and `PUBLIC_BASE_URL`. `ALLOW_LOCAL_WHATSAPP_LINKS=true` is a development-only escape hatch for controlled same-machine testing and is forbidden in production. Never copy an ngrok URL to Render.
 
 ## D. Docker production smoke test
 
@@ -135,7 +135,7 @@ Set these runtime values in Render. Keep secrets out of `render.yaml`.
 | `GROQ_RAG_MODEL` | Yes | `openai/gpt-oss-120b` |
 | `NVIDIA_API_KEY` | Yes, secret | Existing NVIDIA key |
 | `NVIDIA_BASE_URL` | Yes | `https://integrate.api.nvidia.com/v1` |
-| `NVIDIA_SMALL_MODEL` | Yes | `meta/llama-3.1-8b-instruct` in the verified environment |
+| `NVIDIA_SMALL_MODEL` | Yes | `meta/llama-3.2-11b-vision-instruct` |
 | `NVIDIA_VISION_MODEL` | Optional | Verified vision deployment; current configured value is `meta/llama-3.2-11b-vision-instruct` |
 | `EMBEDDING_PROVIDER` | Yes | `local`; model is cached in the image |
 | `EMBEDDING_MODEL` | Yes | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` |
@@ -156,6 +156,7 @@ Set these runtime values in Render. Keep secrets out of `render.yaml`.
 | `UPLOAD_LINK_TTL_HOURS` | No | Default `72` |
 | `UPLOAD_TOKEN_PEPPER` | Yes, secret | Independent random value |
 | `WHATSAPP_PROVIDER` | Yes | `vonage` |
+| `ALLOW_LOCAL_WHATSAPP_LINKS` | Yes | `false`; production rejects the development escape hatch |
 | `VONAGE_API_KEY` | Yes, secret | Existing Sandbox API key |
 | `VONAGE_API_SECRET` | Yes, secret | Existing Sandbox API secret |
 | `VONAGE_SIGNATURE_SECRET` | Yes, secret | Signed webhook verification |
@@ -246,6 +247,8 @@ Status:  https://<render-service>.onrender.com/api/v1/webhooks/vonage/status
 
 Set `PUBLIC_BASE_URL=https://<render-service>.onrender.com` and restart/redeploy the backend. Secure document links are separately generated from `FRONTEND_URL=https://<vercel-domain>`.
 
+Before sending any request, inspect `/api/v1/health` and require `live_upload_origin_ready=true` with the expected Vercel `frontend_origin`. A localhost or wrong-environment token cannot be repaired by editing its hostname because its HMAC is bound to the environment pepper. Discard/revoke the old draft or session and generate a fresh request after correcting the deployment.
+
 ## L. Main-branch auto-deployment
 
 `render.yaml` sets `branch: main` and `autoDeployTrigger: commit`. Vercel must set Production Branch to `main`. Phase-4 branch commits do not become production releases; merging or pushing the resulting commit to `main` triggers both native Git deployments. No deploy-hook GitHub Action is required.
@@ -257,7 +260,7 @@ Set `PUBLIC_BASE_URL=https://<render-service>.onrender.com` and restart/redeploy
 3. Create/sync the Render Blueprint from `main`.
 4. Configure Render secrets.
 5. Obtain the stable Render backend URL.
-6. Verify Render `/api/v1/health`.
+6. Verify Render `/api/v1/health`, including `live_upload_origin_ready=true` and the canonical origins.
 7. Import the same repository into Vercel.
 8. Set Root Directory to `frontend`.
 9. Set Production Branch to `main`.

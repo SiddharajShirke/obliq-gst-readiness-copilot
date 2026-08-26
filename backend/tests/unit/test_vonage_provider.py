@@ -142,12 +142,16 @@ def test_validate_webhook_verifies_signature_claims_timestamp_and_payload_hash()
         asyncio.run(client.aclose())
 
 
-def test_factory_allows_mock_only_in_tests_and_rejects_unsupported_provider() -> None:
+def test_factory_allows_mock_only_with_isolated_test_or_development_data() -> None:
     mock_settings = Settings(app_env="test", whatsapp_provider="mock", _env_file=None)
     assert get_whatsapp_provider(mock_settings).name == "mock"
+    assert (
+        get_whatsapp_provider(mock_settings.model_copy(update={"app_env": "development"})).name
+        == "mock"
+    )
 
     with pytest.raises(RuntimeError, match="Unsupported WhatsApp provider"):
         get_whatsapp_provider(mock_settings.model_copy(update={"whatsapp_provider": "unsupported"}))
 
-    with pytest.raises(RuntimeError, match="only available in tests"):
-        get_whatsapp_provider(mock_settings.model_copy(update={"app_env": "development"}))
+    with pytest.raises(RuntimeError, match="requires isolated in-memory data"):
+        get_whatsapp_provider(mock_settings.model_copy(update={"use_in_memory_db": False}))

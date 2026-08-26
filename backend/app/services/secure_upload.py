@@ -6,6 +6,7 @@ import csv
 import hashlib
 import json
 import re
+import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from zipfile import BadZipFile, ZipFile
 
-from app.config import Settings
+from app.config import Settings, normalize_origin
 from app.repositories.base import DataStore
 from app.services.audit import record_audit
 from app.services.upload_tokens import (
@@ -55,6 +56,17 @@ class SecureUploadTokenError(ValueError):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+
+
+class SecureUploadMessageError(ValueError):
+    """Raised when outbound reminder text does not contain its bound secure link."""
+
+
+UPLOAD_MESSAGE_LINK_PATTERN = re.compile(
+    r"(?P<origin>https?://[^/\s<>()]+)"
+    r"/upload/(?P<token>[A-Za-z0-9_-]{43})(?![A-Za-z0-9_-])",
+    re.IGNORECASE,
+)
 
 
 def validate_secure_upload(
@@ -546,7 +558,7 @@ async def create_secure_upload_link(
             "revoked_at": None,
         },
     )
-    upload_url = f"{settings.frontend_url.rstrip('/')}/upload/{raw_token}"
+    upload_url = f"{normalize_origin(settings.frontend_url)}/upload/{raw_token}"
     await record_audit(
         store,
         firm_id=record.firm_id,
@@ -565,3 +577,50 @@ async def create_secure_upload_link(
         upload_url=upload_url,
         expires_at=record.expires_at.isoformat(),
     )
+
+
+async def verify_reminder_upload_message(
+    store: DataStore,
+    settings: Settings,
+    *,
+    reminder: dict[str, Any],
+    session: dict[str, Any],
+    message: str,
+) -> dict[str, Any]:
+    """Fail closed unless reminder text contains its current environment-bound token."""
+
+    matches = list(UPLOAD_MESSAGE_LINK_PATTERN.finditer(message))
+    if len(matches) != 1:
+        raise SecureUploadMessageError("Expected exactly one secure upload link")
+    match = matches[0]
+    try:
+        message_origin = normalize_origin(match.group("origin"))
+        expected_origin = normalize_origin(settings.frontend_url)
+    except ValueError as exc:
+        raise SecureUploadMessageError("Secure upload origin is invalid") from exc
+    if message_origin != expected_origin:
+        raise SecureUploadMessageError("Secure upload origin belongs to another environment")
+
+    link_id = reminder.get("upload_link_id")
+    link = await store.get_row("upload_links", str(link_id)) if link_id else None
+    if not link:
+        raise SecureUploadMessageError("Secure upload link is not bound to this reminder")
+    expected_hash = hash_upload_token(match.group("token"), settings.upload_token_pepper)
+    if not secrets.compare_digest(expected_hash, str(link.get("token_hash") or "")):
+        raise SecureUploadMessageError("Secure upload token belongs to another environment")
+    if link.get("revoked_at") or _parse_datetime(link["expires_at"]) <= datetime.now(UTC):
+        raise SecureUploadMessageError("Secure upload link has expired or was revoked")
+
+    bindings = {
+        "firm_id": reminder.get("firm_id"),
+        "application_id": reminder.get("application_id"),
+        "client_id": reminder.get("client_id"),
+        "demo_session_id": session.get("id"),
+    }
+    if any(str(link.get(key) or "") != str(value or "") for key, value in bindings.items()):
+        raise SecureUploadMessageError("Secure upload link context does not match the reminder")
+    if str(session.get("session_application_id") or "") != str(
+        reminder.get("application_id") or ""
+    ):
+        raise SecureUploadMessageError("Secure upload session context does not match")
+    return link

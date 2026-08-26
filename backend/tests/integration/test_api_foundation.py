@@ -12,6 +12,8 @@ def test_health_endpoint_reports_demo_dependencies() -> None:
     assert payload["status"] == "ok"
     assert payload["database"] in {"memory", "supabase"}
     assert payload["embedding_warmup_enabled"] is False
+    assert payload["frontend_origin"] == "http://localhost:3000"
+    assert payload["live_upload_origin_ready"] is False
     assert isinstance(payload["uptime_seconds"], int)
     assert "release" in payload
 

@@ -15,8 +15,12 @@ def get_whatsapp_provider(settings: Settings) -> WhatsAppProvider:
             whatsapp_from=settings.vonage_whatsapp_from,
             messages_base_url=settings.vonage_messages_base_url,
         )
-    if settings.whatsapp_provider == "mock" and settings.app_env == "test":
+    if (
+        settings.whatsapp_provider == "mock"
+        and settings.app_env.lower() in {"test", "development"}
+        and settings.use_in_memory_db
+    ):
         return MockWhatsAppProvider()
     if settings.whatsapp_provider == "mock":
-        raise RuntimeError("The mock WhatsApp provider is only available in tests")
+        raise RuntimeError("The mock WhatsApp provider requires isolated in-memory data")
     raise RuntimeError(f"Unsupported WhatsApp provider: {settings.whatsapp_provider}")

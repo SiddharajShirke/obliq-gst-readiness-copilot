@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+import pytest
 from cryptography.fernet import Fernet
 
 # Runtime defaults are intentionally strict. Tests opt into the internal mock transport.
@@ -19,3 +20,12 @@ os.environ["VONAGE_SIGNATURE_SECRET"] = "test-signature-secret"
 os.environ["VONAGE_WHATSAPP_FROM"] = "447700900001"
 os.environ["VONAGE_SANDBOX_JOIN_MESSAGE"] = "allow test-sandbox"
 os.environ["PUBLIC_BASE_URL"] = "https://api.example.test"
+
+
+@pytest.fixture(autouse=True)
+def reset_process_rate_limiter():
+    from app.services.whatsapp.rate_limit import rate_limiter
+
+    rate_limiter.reset()
+    yield
+    rate_limiter.reset()

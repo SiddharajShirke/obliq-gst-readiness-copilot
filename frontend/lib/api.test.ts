@@ -6,7 +6,7 @@ const {getSupabaseBrowserClient} = vi.hoisted(() => ({
 
 vi.mock("./supabase", () => ({getSupabaseBrowserClient}));
 
-import {apiFetch} from "./api";
+import {apiFetch, resolveApiBaseUrl} from "./api";
 import * as apiModule from "./api";
 
 class MemoryStorage {
@@ -130,5 +130,31 @@ describe("export download selection", () => {
     expect(select({report: "report-url", export_pack_zip: "pack-url"}, "export_pack_zip"))
       .toEqual(["pack-url"]);
     expect(select({report: "report-url"}, "export_pack_zip")).toEqual(["report-url"]);
+  });
+});
+
+describe("deployment-safe API base resolution", () => {
+  it("preserves localhost for a local development page", () => {
+    expect(resolveApiBaseUrl(undefined, "http://localhost:3000"))
+      .toBe("http://localhost:8000/api/v1");
+  });
+
+  it.each([
+    undefined,
+    "http://localhost:8000/api/v1",
+    "http://127.0.0.1:8000/api/v1",
+    "http://192.168.1.50:8000/api/v1",
+  ])("rejects an unsafe API base on a hosted page: %s", configured => {
+    expect(() => resolveApiBaseUrl(
+      configured,
+      "https://obliq-gst-readiness-copilot.vercel.app",
+    )).toThrow(/production API configuration/i);
+  });
+
+  it("accepts and normalizes the deployed Render API", () => {
+    expect(resolveApiBaseUrl(
+      "  https://obliq-gst-readiness-copilot.onrender.com/api/v1/  ",
+      "https://obliq-gst-readiness-copilot.vercel.app",
+    )).toBe("https://obliq-gst-readiness-copilot.onrender.com/api/v1");
   });
 });

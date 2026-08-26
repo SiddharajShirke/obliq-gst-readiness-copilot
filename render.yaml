@@ -42,14 +42,16 @@ services:
         value: "false"
       - key: WHATSAPP_PROVIDER
         value: vonage
+      - key: ALLOW_LOCAL_WHATSAPP_LINKS
+        value: "false"
       - key: FRONTEND_URL
-        sync: false
+        value: https://obliq-gst-readiness-copilot.vercel.app
       - key: BACKEND_URL
-        sync: false
+        value: https://obliq-gst-readiness-copilot.onrender.com
       - key: PUBLIC_BASE_URL
-        sync: false
+        value: https://obliq-gst-readiness-copilot.onrender.com
       - key: CORS_ORIGINS
-        sync: false
+        value: https://obliq-gst-readiness-copilot.vercel.app
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
@@ -73,7 +75,7 @@ services:
       - key: NVIDIA_BASE_URL
         sync: false
       - key: NVIDIA_SMALL_MODEL
-        sync: false
+        value: meta/llama-3.2-11b-vision-instruct
       - key: NVIDIA_VISION_MODEL
         sync: false
       - key: OCR_ENABLED

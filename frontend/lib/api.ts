@@ -7,9 +7,57 @@ import {getSupabaseBrowserClient} from "./supabase";
 
 const DEFAULT_API_BASE = "http://localhost:8000/api/v1";
 
-export function resolveApiBaseUrl(configured = process.env.NEXT_PUBLIC_API_BASE_URL): string {
+function isUnsafeNetworkHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  if (
+    host === "localhost"
+    || host.endsWith(".localhost")
+    || host.endsWith(".local")
+    || host === "host.docker.internal"
+    || host === "0.0.0.0"
+    || host === "::1"
+    || host.startsWith("127.")
+    || host.startsWith("10.")
+    || host.startsWith("192.168.")
+    || host.startsWith("169.254.")
+  ) return true;
+  const parts = host.split(".").map(Number);
+  return parts.length === 4
+    && parts.every(part => Number.isInteger(part) && part >= 0 && part <= 255)
+    && parts[0] === 172
+    && parts[1] >= 16
+    && parts[1] <= 31;
+}
+
+function isHostedPage(runtimeOrigin?: string): boolean {
+  if (!runtimeOrigin) return false;
+  try {
+    const origin = new URL(runtimeOrigin);
+    return !isUnsafeNetworkHost(origin.hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function resolveApiBaseUrl(
+  configured = process.env.NEXT_PUBLIC_API_BASE_URL,
+  runtimeOrigin = typeof window !== "undefined" ? window.location?.origin : undefined,
+): string {
   const base = configured?.trim().replace(/\/+$/, "") || DEFAULT_API_BASE;
-  return /\/api\/v1$/i.test(base) ? base : `${base}/api/v1`;
+  const normalized = /\/api\/v1$/i.test(base) ? base : `${base}/api/v1`;
+  if (isHostedPage(runtimeOrigin)) {
+    try {
+      const apiUrl = new URL(normalized);
+      if (apiUrl.protocol !== "https:" || isUnsafeNetworkHost(apiUrl.hostname)) {
+        throw new Error("unsafe host");
+      }
+    } catch {
+      throw new Error(
+        "Production API configuration is missing or points to a local/private server.",
+      );
+    }
+  }
+  return normalized;
 }
 
 const API_BASE = resolveApiBaseUrl();

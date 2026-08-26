@@ -72,9 +72,25 @@ def test_vonage_runtime_configuration_requires_all_security_values() -> None:
         )
 
 
-def test_non_test_runtime_rejects_mock_or_removed_providers() -> None:
+def test_local_memory_development_may_use_mock_whatsapp() -> None:
+    settings = Settings(
+        app_env="development",
+        use_in_memory_db=True,
+        whatsapp_provider="mock",
+        _env_file=None,
+    )
+
+    assert settings.whatsapp_provider == "mock"
+
+
+def test_non_test_runtime_rejects_mock_with_shared_data_or_removed_providers() -> None:
     with pytest.raises(ValidationError, match="WHATSAPP_PROVIDER must be vonage"):
-        Settings(app_env="development", whatsapp_provider="mock", _env_file=None)
+        Settings(
+            app_env="development",
+            use_in_memory_db=False,
+            whatsapp_provider="mock",
+            _env_file=None,
+        )
     with pytest.raises(ValidationError, match="WHATSAPP_PROVIDER must be vonage"):
         Settings(app_env="development", whatsapp_provider="unsupported", _env_file=None)
     with pytest.raises(ValidationError, match="WHATSAPP_PROVIDER must be vonage"):
@@ -96,6 +112,38 @@ def test_non_test_runtime_requires_secure_upload_pepper() -> None:
             whatsapp_phone_hash_pepper="phone-pepper",
             whatsapp_phone_encryption_key="encryption-key",
             upload_token_pepper="",
+            _env_file=None,
+        )
+
+
+def test_live_vonage_rejects_localhost_upload_origin_by_default() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="Live Vonage requires FRONTEND_URL to be a public HTTPS origin",
+    ):
+        Settings(
+            **production_values(
+                app_env="development",
+                frontend_url="http://localhost:3000",
+            ),
+            _env_file=None,
+        )
+
+
+def test_development_override_requires_explicit_opt_in_and_never_works_in_production() -> None:
+    settings = Settings(
+        **production_values(
+            app_env="development",
+            frontend_url="http://localhost:3000",
+            allow_local_whatsapp_links=True,
+        ),
+        _env_file=None,
+    )
+    assert settings.allow_local_whatsapp_links is True
+
+    with pytest.raises(ValidationError, match="ALLOW_LOCAL_WHATSAPP_LINKS=false"):
+        Settings(
+            **production_values(allow_local_whatsapp_links=True),
             _env_file=None,
         )
 

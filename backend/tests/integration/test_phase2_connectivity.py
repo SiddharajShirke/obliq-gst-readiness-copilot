@@ -328,6 +328,204 @@ def test_active_session_draft_creates_clone_bound_upload_link_and_send_reuses_ph
     }
 
 
+@pytest.mark.parametrize(
+    "tamper", ["origin", "token", "binding", "revoked", "expired"]
+)
+def test_document_request_rejects_cross_environment_or_unbound_upload_link(
+    connectivity_client,
+    tamper: str,
+) -> None:
+    client, store, settings, provider = connectivity_client
+    created = client.post(
+        f"/api/v1/applications/{APP_ID}/whatsapp-demo-sessions", headers=AUTH
+    ).json()
+    session = asyncio.run(store.get_row("whatsapp_demo_sessions", created["session_id"]))
+    assert session is not None
+    protected = PhoneProtector(
+        hash_pepper=settings.whatsapp_phone_hash_pepper,
+        encryption_key=settings.whatsapp_phone_encryption_key,
+    ).protect("+919999998888")
+    asyncio.run(
+        store.update_row(
+            "whatsapp_demo_sessions",
+            session["id"],
+            {
+                "status": "active",
+                "judge_phone_hash": protected.lookup_hash,
+                "judge_phone_encrypted": protected.encrypted,
+                "judge_phone_last_four": protected.last_four,
+                "connected_at": datetime.now(UTC).isoformat(),
+            },
+        )
+    )
+    headers = {
+        **AUTH,
+        "X-OBLIQ-Demo-Session-Id": session["id"],
+        "X-OBLIQ-Demo-Access-Token": created["dashboard_access_token"],
+    }
+    drafted = client.post(
+        f"/api/v1/applications/{APP_ID}/document-request/draft", headers=headers
+    ).json()
+    message = drafted["draft_message"]
+    if tamper == "origin":
+        message = message.replace(
+            "https://dashboard.example.test", "http://localhost:3000"
+        )
+    elif tamper == "token":
+        original_token = drafted["upload_url"].rsplit("/", 1)[-1]
+        replacement = "A" * len(original_token)
+        message = message.replace(original_token, replacement)
+    elif tamper == "binding":
+        asyncio.run(
+            store.update_row(
+                "upload_links",
+                drafted["upload_link_id"],
+                {"application_id": APP_ID},
+            )
+        )
+    elif tamper == "revoked":
+        asyncio.run(
+            store.update_row(
+                "upload_links",
+                drafted["upload_link_id"],
+                {"revoked_at": datetime.now(UTC).isoformat()},
+            )
+        )
+    else:
+        asyncio.run(
+            store.update_row(
+                "upload_links",
+                drafted["upload_link_id"],
+                {"expires_at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat()},
+            )
+        )
+
+    sent = client.post(
+        f"/api/v1/applications/{APP_ID}/document-request/approve-send",
+        headers=headers,
+        json={"reminder_id": drafted["id"], "message": message},
+    )
+
+    assert sent.status_code == 409, sent.text
+    assert "Prepare a new request" in sent.json()["detail"]
+    assert provider.sent == []
+
+
+def test_connected_request_upload_submission_extraction_and_overview_are_end_to_end(
+    connectivity_client,
+) -> None:
+    client, store, settings, provider = connectivity_client
+    created = client.post(
+        f"/api/v1/applications/{APP_ID}/whatsapp-demo-sessions", headers=AUTH
+    ).json()
+    session = asyncio.run(store.get_row("whatsapp_demo_sessions", created["session_id"]))
+    assert session is not None
+    protected = PhoneProtector(
+        hash_pepper=settings.whatsapp_phone_hash_pepper,
+        encryption_key=settings.whatsapp_phone_encryption_key,
+    ).protect("+919999998888")
+    asyncio.run(
+        store.update_row(
+            "whatsapp_demo_sessions",
+            session["id"],
+            {
+                "status": "active",
+                "judge_phone_hash": protected.lookup_hash,
+                "judge_phone_encrypted": protected.encrypted,
+                "judge_phone_last_four": protected.last_four,
+                "connected_at": datetime.now(UTC).isoformat(),
+            },
+        )
+    )
+    headers = {
+        **AUTH,
+        "X-OBLIQ-Demo-Session-Id": session["id"],
+        "X-OBLIQ-Demo-Access-Token": created["dashboard_access_token"],
+    }
+    drafted = client.post(
+        f"/api/v1/applications/{APP_ID}/document-request/draft", headers=headers
+    ).json()
+    sent = client.post(
+        f"/api/v1/applications/{APP_ID}/document-request/approve-send",
+        headers=headers,
+        json={"reminder_id": drafted["id"], "message": drafted["draft_message"]},
+    )
+    assert sent.status_code == 200, sent.text
+    assert len(provider.sent) == 1
+
+    raw_token = drafted["upload_url"].rsplit("/", 1)[-1]
+    public_context = client.get(f"/api/v1/public/upload/{raw_token}")
+    assert public_context.status_code == 200, public_context.text
+    checklist = public_context.json()["checklist"]
+    assert len(checklist) == 6
+    for index, requirement in enumerate(checklist, start=1):
+        content = (
+            "Invoice No,Invoice Date,Taxable Value,CGST,SGST,Invoice Total\n"
+            f"E2E-{index},2026-04-{index + 1:02d},1000,90,90,1180\n"
+        ).encode()
+        uploaded = client.post(
+            f"/api/v1/public/upload/{raw_token}",
+            data={"requirement_id": requirement["id"]},
+            files={
+                "file": (
+                    f"{index:02d}_{requirement['label'].replace(' ', '_')}.csv",
+                    content,
+                    "text/csv",
+                )
+            },
+        )
+        assert uploaded.status_code == 201, uploaded.text
+        assert uploaded.json()["processing_status"] == "awaiting_submission"
+
+    submitted = client.post(f"/api/v1/public/upload/{raw_token}/submit")
+    assert submitted.status_code == 202, submitted.text
+    batch_status = client.get(f"/api/v1/public/upload/{raw_token}/status")
+    assert batch_status.status_code == 200, batch_status.text
+    batch = batch_status.json()["latest_submission_batch"]
+    assert batch["status"] == "completed"
+    assert batch["document_count"] == 6
+    assert batch["completed_count"] == 6
+    assert batch["failed_count"] == 0
+
+    application_id = session["session_application_id"]
+    documents = asyncio.run(
+        store.list_rows("documents", {"application_id": application_id})
+    )
+    extractions = asyncio.run(store.list_rows("document_extractions"))
+    records = asyncio.run(
+        store.list_rows("invoice_records", {"application_id": application_id})
+    )
+    assert len(documents) == 6
+    assert all(
+        document["processing_status"] in {"ready_for_review", "needs_review"}
+        for document in documents
+    )
+    document_ids = {document["id"] for document in documents}
+    assert len(
+        [row for row in extractions if row["document_id"] in document_ids]
+    ) == 6
+    assert len(records) == 6
+
+    overview = client.get(
+        f"/api/v1/applications/{APP_ID}/document-collection-status",
+        headers=headers,
+    )
+    assert overview.status_code == 200, overview.text
+    payload = overview.json()
+    assert payload["effective_application_id"] == application_id
+    assert payload["received_count"] == 6
+    assert payload["progress_percent"] == 100
+    assert payload["workflow"]["current_stage"] == "extraction_review"
+    assert payload["workflow"]["extraction"]["record_count"] == 6
+    assert payload["workflow"]["extraction"]["pending_count"] == 6
+    actions = {row["action"] for row in asyncio.run(store.list_rows("audit_events"))}
+    assert {
+        "document_request_sent",
+        "upload_completed",
+        "checklist_requirement_received",
+    } <= actions
+
+
 def test_reminder_uses_only_live_missing_rows_and_reuses_existing_link(
     connectivity_client,
 ) -> None:
