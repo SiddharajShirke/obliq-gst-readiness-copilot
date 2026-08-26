@@ -1,7 +1,7 @@
 "use client";
 
 import QRCode from "react-qr-code";
-import {Copy, MessageCircleMore, RefreshCw, ShieldCheck, XCircle} from "lucide-react";
+import {AlertTriangle, Copy, Link2, MessageCircleMore, RefreshCw, ShieldCheck, XCircle} from "lucide-react";
 import {Badge} from "../ui/badge";
 import {Button} from "../ui/button";
 import {Card} from "../ui/card";
@@ -49,6 +49,21 @@ function CopyValue({value, onCopy}: {value: string; onCopy: (value: string) => v
 export function WhatsAppDemoView({created, status, countdown, busy, onCopy, onRegenerate, onCancel, onReconnect}: Props) {
   const currentStatus = status?.status ?? created.status;
   const connected = currentStatus === "active";
+  const diagnostic = status?.connection_diagnostic;
+  const delayedStart = diagnostic?.state === "awaiting_valid_start" && diagnostic.waited_seconds >= 20;
+  const uploadState = status?.upload_workflow;
+  const uploadNotice = uploadState?.state === "documents_received"
+    ? {
+        title: "Documents received",
+        detail: `${uploadState.received_document_count} document${uploadState.received_document_count === 1 ? "" : "s"} reached the isolated GST workspace. Processing continues through the normal Documents & Extraction pipeline.`,
+      }
+    : uploadState?.state === "secure_link_ready"
+      ? {title: "Secure upload link ready", detail: "Review and send the prepared request from the GST workspace. The client link is session-scoped and stored privately."}
+      : uploadState?.state === "secure_link_unavailable"
+        ? {title: "Secure upload link unavailable", detail: "The previous link expired or was revoked. Return to the GST workspace and draft the request again."}
+        : uploadState?.state === "ready_to_prepare_request"
+          ? {title: "Connection ready for request", detail: "Return to the GST workspace and choose Draft Request. If you arrived here from a saved draft, OBLIQ will prepare its secure link automatically."}
+          : null;
   return <>
     <Card className="mb-6 border-[var(--obliq-warning-border)] bg-[var(--obliq-warning-soft)] p-5 text-sm leading-6 text-[var(--obliq-warning-ink)]">
       <strong>This demonstration uses the Vonage WhatsApp Sandbox and your real WhatsApp account.</strong>
@@ -91,6 +106,23 @@ export function WhatsAppDemoView({created, status, countdown, busy, onCopy, onRe
 
     <Card className="mt-6 p-6">
       {connected && <div className="mb-5 flex items-start gap-3 rounded-2xl border border-[var(--obliq-success-border)] bg-[var(--obliq-success-soft)] p-4 text-[var(--obliq-success-ink)]"><ShieldCheck className="mt-0.5 shrink-0" size={19}/><div><strong>WhatsApp Connected</strong><p className="mt-1 text-sm">The unique session is bound to this cloned GST workspace. Review and send the preserved document request next.</p></div></div>}
+      {!connected && diagnostic && <div className={`mb-5 rounded-2xl border p-4 ${delayedStart || diagnostic.state === "start_token_expired" ? "border-[var(--obliq-warning-border)] bg-[var(--obliq-warning-soft)] text-[var(--obliq-warning-ink)]" : "border-[var(--obliq-info-border)] bg-[var(--obliq-info-soft)] text-[var(--obliq-info-ink)]"}`}>
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 shrink-0" size={19}/>
+          <div className="min-w-0 flex-1">
+            <strong>{diagnostic.state === "start_token_expired" ? "START token expired" : delayedStart ? "No valid START webhook received" : "Waiting for the OBLIQ START message"}</strong>
+            <p className="mt-1 text-sm leading-6">Joining the Sandbox does not start the OBLIQ session. Send the exact message from the second QR and keep this page open.</p>
+            {(delayedStart || diagnostic.state === "start_token_expired") && <>
+              <p className="mt-2 text-sm leading-6">If the message was sent, verify this URL under <strong>Vonage Messages API Sandbox</strong> → Inbound webhook. It must use POST and the same API key configured on the backend.</p>
+              <div className="mt-3 flex gap-2">
+                <code className="min-w-0 flex-1 overflow-x-auto rounded-xl bg-[var(--obliq-surface)] p-3 text-xs text-[var(--obliq-ink)]">{diagnostic.inbound_webhook_url}</code>
+                <Button variant="secondary" className="px-4" onClick={() => onCopy(diagnostic.inbound_webhook_url)} aria-label="Copy inbound webhook URL"><Copy size={16}/></Button>
+              </div>
+            </>}
+          </div>
+        </div>
+      </div>}
+      {connected && uploadNotice && <div className="mb-5 flex items-start gap-3 rounded-2xl border border-[var(--obliq-info-border)] bg-[var(--obliq-info-soft)] p-4 text-[var(--obliq-info-ink)]"><Link2 className="mt-0.5 shrink-0" size={19}/><div><strong>{uploadNotice.title}</strong><p className="mt-1 text-sm leading-6">{uploadNotice.detail}</p>{uploadState?.latest_link_expires_at && uploadState.state === "secure_link_ready" && <p className="mt-1 text-xs">Link expiry: {formatDate(uploadState.latest_link_expires_at)}</p>}</div></div>}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><p className="text-xs font-bold tracking-[.13em] text-[var(--obliq-info-ink)]">LIVE STATUS</p><h2 className="mt-2 text-xl font-bold">Session status</h2></div>
         <Badge value={currentStatus}/>
